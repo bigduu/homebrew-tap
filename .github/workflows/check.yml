@@ -1,0 +1,25 @@
+name: Check tap
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  audit:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Register checked-out tap
+        run: brew tap bigduu/tap "$GITHUB_WORKSPACE"
+      - name: Audit formulae and cask
+        run: |
+          brew audit --strict --formula bigduu/tap/jiandu bigduu/tap/nova
+          brew audit --strict --cask bigduu/tap/bodhi
+      - name: Fetch and verify release assets
+        run: |
+          brew fetch --formula bigduu/tap/jiandu bigduu/tap/nova
+          brew fetch --cask bigduu/tap/bodhi
+      - name: Verify cask dependencies
+        run: |
+          brew info --json=v2 --cask bigduu/tap/bodhi | jq -e '.casks[0].depends_on.formula | index("bigduu/tap/jiandu") and index("bigduu/tap/nova")'
