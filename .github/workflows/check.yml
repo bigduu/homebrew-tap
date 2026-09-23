@@ -24,6 +24,15 @@ jobs:
           brew fetch --cask bigduu/tap/bodhi
       - name: Check installation plan
         run: brew install --dry-run --cask bigduu/tap/bodhi
+      - name: Install all three packages in the disposable runner
+        run: |
+          mkdir -p "$RUNNER_TEMP/bodhi-apps"
+          brew install --cask --appdir="$RUNNER_TEMP/bodhi-apps" bigduu/tap/bodhi
+          test -x "$RUNNER_TEMP/bodhi-apps/Bodhi AI.app/Contents/MacOS/bodhi"
+          test -x "$(brew --prefix)/bin/jiandu"
+          test -x "$(brew --prefix)/bin/nova"
+          jiandu --help
+          nova --version
       - name: Verify cask dependencies
         run: |
           brew info --json=v2 --cask bigduu/tap/bodhi | jq -e '.casks[0].depends_on.formula | index("bigduu/tap/jiandu") and index("bigduu/tap/nova")'
