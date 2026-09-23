@@ -12,6 +12,6 @@ class Nova < Formula
   end
 
   test do
-    system "#{bin}/nova", "--version"
+    system bin/"nova", "--version"
   end
 end
