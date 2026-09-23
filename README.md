@@ -4,8 +4,11 @@ This tap installs [Bodhi AI](https://github.com/bigduu/Bodhi-AI) together with t
 
 ```sh
 brew tap bigduu/tap
+brew trust bigduu/tap
 brew install --cask bigduu/tap/bodhi
 ```
+
+Homebrew requires explicit trust to load formula dependencies from a third-party tap. `brew trust bigduu/tap` trusts this tap, including future packages from it.
 
 The Bodhi cask selects the Apple Silicon or Intel DMG automatically. It installs `jiandu` and `nova` as Homebrew formula dependencies. Bodhi already bundles its Bamboo backend. Homebrew manages the two command-line tools separately so `brew upgrade` can update them.
 
