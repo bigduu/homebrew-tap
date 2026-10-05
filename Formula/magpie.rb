@@ -3,9 +3,16 @@ class Magpie < Formula
   homepage "https://github.com/bigduu/Magpie"
   license "MIT"
 
+  # Universal macOS archive (same bytes for arm64 and x86_64).
   on_macos do
-    url "https://github.com/bigduu/Magpie/releases/download/v0.1.2/magpie-v0.1.2-universal-apple-darwin.tar.gz"
-    sha256 "089b9ca5f11e54ea40ae7263643cc4dcc5cb22a551f404ba0ec828e57b011971"
+    on_arm do
+      url "https://github.com/bigduu/Magpie/releases/download/v0.1.2/magpie-v0.1.2-universal-apple-darwin.tar.gz"
+      sha256 "089b9ca5f11e54ea40ae7263643cc4dcc5cb22a551f404ba0ec828e57b011971"
+    end
+    on_intel do
+      url "https://github.com/bigduu/Magpie/releases/download/v0.1.2/magpie-v0.1.2-universal-apple-darwin.tar.gz"
+      sha256 "089b9ca5f11e54ea40ae7263643cc4dcc5cb22a551f404ba0ec828e57b011971"
+    end
   end
 
   on_linux do
