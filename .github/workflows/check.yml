@@ -20,11 +20,11 @@ jobs:
           brew trust bigduu/tap
       - name: Audit formulae and cask
         run: |
-          brew audit --strict --formula bigduu/tap/jiandu bigduu/tap/nova
+          brew audit --strict --formula bigduu/tap/jiandu bigduu/tap/nova bigduu/tap/magpie
           brew audit --strict --cask bigduu/tap/bodhi
       - name: Fetch and verify release assets
         run: |
-          brew fetch --formula bigduu/tap/jiandu bigduu/tap/nova
+          brew fetch --formula bigduu/tap/jiandu bigduu/tap/nova bigduu/tap/magpie
           brew fetch --cask bigduu/tap/bodhi
       - name: Check installation plan
         run: brew install --dry-run --cask bigduu/tap/bodhi
@@ -46,6 +46,10 @@ jobs:
           test -x "$(brew --prefix)/bin/nova"
           jiandu --help
           nova --version
+      - name: Install magpie
+        run: |
+          brew install --formula bigduu/tap/magpie
+          magpie --version
       - name: Verify cask dependencies
         run: |
           brew info --json=v2 --cask bigduu/tap/bodhi | jq -e '.casks[0].depends_on.formula | index("bigduu/tap/jiandu") and index("bigduu/tap/nova")'
