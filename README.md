@@ -2,7 +2,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-This tap installs [Bodhi AI](https://github.com/bigduu/Bodhi-AI) together with the [Jiandu](https://github.com/bigduu/Jiandu) and [Nova](https://github.com/bigduu/Nova) command-line MCP servers.
+This tap installs [Bodhi AI](https://github.com/bigduu/Bodhi-AI) together with the [Jiandu](https://github.com/bigduu/Jiandu), [Nova](https://github.com/bigduu/Nova), and [Magpie](https://github.com/bigduu/Magpie) command-line tools.
 
 ```sh
 brew tap bigduu/tap
@@ -12,17 +12,18 @@ brew install --cask bigduu/tap/bodhi
 
 Homebrew requires explicit trust to load formula dependencies from a third-party tap. `brew trust bigduu/tap` trusts this tap, including future packages from it.
 
-The Bodhi cask selects the Apple Silicon or Intel DMG automatically. It installs `jiandu` and `nova` as Homebrew formula dependencies. Bodhi already bundles its Bamboo backend. Homebrew manages the two command-line tools separately so `brew upgrade` can update them.
+The Bodhi cask selects the Apple Silicon or Intel DMG automatically. It installs `jiandu` and `nova` as Homebrew formula dependencies. Bodhi already bundles its Bamboo backend. Homebrew manages the two command-line tools separately so `brew upgrade` can update them. Magpie is not a Bodhi cask dependency — install it separately when you need the Telegram/Feishu bridge.
 
-To install only one of the command-line MCP servers, use its fully qualified name; Homebrew trusts that item for the install:
+To install only one of the command-line tools, use its fully qualified name; Homebrew trusts that item for the install:
 
 ```sh
 brew tap bigduu/tap
 brew install bigduu/tap/nova     # macOS only; installs the Nova release archive
 brew install bigduu/tap/jiandu   # compiles Jiandu from its source tag with Rust
+brew install bigduu/tap/magpie   # macOS / Linux x86_64; Magpie IM bridge for Bamboo
 ```
 
-Check the installed tools with `jiandu --help` and `nova --version`. The current `jiandu` formula (v0.2.0) runs as an MCP stdio server when started with a data directory and session ID; installing it does not start a background service or configure an MCP host. Nova CLI also needs its own host configuration and macOS permissions for computer control.
+Check the installed tools with `jiandu --help`, `nova --version`, and `magpie --version`. From Jiandu 0.3.0, `--session-id` / `--project-id` are optional defaults — the host can pass identity per MCP call; installing the formula does not start a background service or configure an MCP host. Nova CLI also needs its own host configuration and macOS permissions for computer control. From Nova 0.3.0, macOS `nova mcp` expects a separately installed matching Nova.app (development preview, not in this tap) with Screen Recording and Accessibility granted to that app.
 
 **Current release signing:** Bodhi `2026.9.20` is ad-hoc signed and has no notarization ticket. During cask installation, Homebrew automatically removes download quarantine from the installed Bodhi app, re-signs it locally with an ad-hoc signature while keeping the hardened runtime, and verifies the signature. This is the same local workaround as Bodhi’s self-sign script; the downloaded DMG remains checksum-verified and unchanged. `spctl` still rejects the app because ad-hoc signing is not Developer ID signing. This procedure skips Gatekeeper’s quarantine-based first-launch assessment and may require macOS privacy permissions to be granted again after upgrades. Remove the cask postflight steps when Bodhi publishes a Developer ID signed and notarized DMG (tracked in [Bodhi #75](https://github.com/bigduu/Bodhi-AI/issues/75)).
 
