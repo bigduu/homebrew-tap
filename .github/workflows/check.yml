@@ -5,51 +5,21 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  audit:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+  update-tests:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Register checked-out tap
-        run: |
-          brew tap bigduu/tap "$GITHUB_WORKSPACE"
-          brew trust bigduu/tap
-      - name: Audit formulae and cask
-        run: |
-          brew audit --strict --formula bigduu/tap/jiandu bigduu/tap/nova bigduu/tap/magpie
-          brew audit --strict --cask bigduu/tap/bodhi
-      - name: Fetch and verify release assets
-        run: |
-          brew fetch --formula bigduu/tap/jiandu bigduu/tap/nova bigduu/tap/magpie
-          brew fetch --cask bigduu/tap/bodhi
-      - name: Check installation plan
-        run: brew install --dry-run --cask bigduu/tap/bodhi
-      - name: Install all three packages in the disposable runner
-        run: |
-          mkdir -p "$RUNNER_TEMP/bodhi-apps"
-          brew install --cask --appdir="$RUNNER_TEMP/bodhi-apps" bigduu/tap/bodhi
-          app="$RUNNER_TEMP/bodhi-apps/Bodhi AI.app"
-          test -x "$app/Contents/MacOS/bodhi"
-          /usr/bin/file "$app/Contents/MacOS/bodhi" | grep -F "$(uname -m)"
-          /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
-          /usr/bin/codesign -dv --verbose=4 "$app" 2>&1 | grep -F 'Signature=adhoc'
-          /usr/bin/xattr -lr "$app" > "$RUNNER_TEMP/bodhi-xattrs.txt"
-          if grep -Fq 'com.apple.quarantine' "$RUNNER_TEMP/bodhi-xattrs.txt"; then
-            echo 'Bodhi quarantine attribute remains after postflight signing' >&2
-            exit 1
-          fi
-          test -x "$(brew --prefix)/bin/jiandu"
-          test -x "$(brew --prefix)/bin/nova"
-          jiandu --help
-          nova --version
-      - name: Install magpie
-        run: |
-          brew install --formula bigduu/tap/magpie
-          magpie --version
-      - name: Verify cask dependencies
-        run: |
-          brew info --json=v2 --cask bigduu/tap/bodhi | jq -e '.casks[0].depends_on.formula | index("bigduu/tap/jiandu") and index("bigduu/tap/nova")'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: node --test scripts/tap-update.test.cjs
+  audit:
+    uses: ./.github/workflows/check-tap.yml
+    with:
+      ref: ${{ github.sha }}
