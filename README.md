@@ -37,6 +37,8 @@ The `Update tap releases` workflow checks the latest published stable releases o
 
 For new versions, it resolves each upstream tag to an exact source commit and verifies all selected downloads, then opens one `automation/tap-<release-identity>` PR containing only the necessary cask/formula versions, URLs, and hashes. Dependencies and installation behavior stay intact. A snapshot fixes all three release identities, tap base, PR head, and candidate tree. The same workflow audits, fetches, and installs that exact candidate on Apple Silicon and Intel using the normal tap checks. It rechecks the releases, downloads, PR head/base, reviews, and required checks before merging the exact head. Version updates never push directly to `main`.
 
+Before any installation postflight, the checks mount the downloaded Bodhi DMG read-only and verify the original app's signature. Only the current valid ad-hoc signing class is admitted. A Developer ID/certificate signature or unknown signing state stops the update so a maintainer can migrate the temporary quarantine/signing workaround before accepting that release.
+
 No PAT or additional secret is required. Repository administrators must enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**. Keep the default workflow permission at read-only; only the updater's prepare and merge jobs request `contents: write` and `pull-requests: write`. The updater runs its own checks because PR workflows created with `GITHUB_TOKEN` can require approval. Branch protection continues to apply to its merge.
 
 If a release or PR changes during validation, a check fails, or a review requests changes, the workflow stops and leaves the PR for inspection. Rerun the updater after correcting the failure. When `main` has advanced, a later run can refresh its own bot-authored candidate if its diff can be reconstructed solely from the admitted releases, using an exact-head force-with-lease before repeating both architecture checks. It preserves human edits and requested changes. A competing automated release PR, stale orphan branch, or previously closed release PR requires maintainer review: close obsolete PRs and delete their automation branches before running again. The updater does not undo a maintainer's closure.
@@ -46,12 +48,12 @@ GitHub's merge endpoint guards the PR head but has no atomic expected-base optio
 Maintainer checks:
 
 ```sh
-node --test scripts/tap-update.test.cjs
+node --test scripts/*.test.cjs
 actionlint .github/workflows/check.yml .github/workflows/check-tap.yml .github/workflows/update-tap.yml
 node scripts/tap-update.cjs probe # read-only; uses your existing gh authentication
 ```
 
-`brew update` refreshes the tap metadata on a user's machine. Install the new application with `brew upgrade --cask bigduu/tap/bodhi`.
+`brew update` refreshes the tap metadata on a user's machine. Upgrade the application with `brew upgrade --cask bigduu/tap/bodhi` and both companion tools with `brew upgrade bigduu/tap/jiandu bigduu/tap/nova`.
 
 ## License
 

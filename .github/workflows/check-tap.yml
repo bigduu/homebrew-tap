@@ -51,6 +51,18 @@ jobs:
         run: |
           brew fetch --formula bigduu/tap/jiandu bigduu/tap/nova bigduu/tap/magpie
           brew fetch --cask bigduu/tap/bodhi
+      - name: Verify original Bodhi signing before the cask modifies the app
+        run: |
+          mountpoint="$(mktemp -d "$RUNNER_TEMP/bodhi-original.XXXXXX")"
+          cleanup() {
+            /usr/bin/hdiutil detach "$mountpoint" >/dev/null 2>&1 || true
+            rmdir "$mountpoint" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          dmg="$(brew --cache --cask bigduu/tap/bodhi)"
+          test -f "$dmg"
+          /usr/bin/hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mountpoint"
+          node scripts/verify-bodhi-signing.cjs "$mountpoint/Bodhi AI.app"
       - name: Check installation plan
         run: brew install --dry-run --cask bigduu/tap/bodhi
       - name: Install all three packages in the disposable runner

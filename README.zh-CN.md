@@ -37,6 +37,8 @@ Nova formula 只安装命令行程序。单独发布的 Nova.app 压缩包标注
 
 出现新版本时，更新器先解析每个上游 tag 对应的确切源码提交，并下载校验所选资产，再创建一个 `automation/tap-<release-identity>` PR，只修改必要 cask/formula 的版本、URL 和哈希；保留全部依赖和安装行为。快照固定三包的 release 身份、tap 基线、PR head 和候选 tree。同一次工作流在 Apple Silicon 和 Intel 上对这个确切候选运行正常 tap 的 audit、下载和安装检查；合并前再次核对 release、下载内容、PR head/base、review 和 required checks。版本更新始终经过 PR，不直接推送 `main`。
 
+检查在安装 postflight 前只读挂载已下载的 Bodhi DMG，校验应用原始签名，只准入当前有效的 ad-hoc 签名。出现 Developer ID/证书签名或未知签名状态时会停止更新，要求维护者先迁移临时 quarantine/签名 workaround，再接受该版本。
+
 无需 PAT 或新增 secret。仓库管理员需要启用 **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**。工作流默认权限保持只读，只有更新器的 prepare 和 merge job 申请 `contents: write` 与 `pull-requests: write`。由于 `GITHUB_TOKEN` 创建的 PR 工作流可能需要批准，更新器在同一次运行内完成检查；分支保护仍然约束合并。
 
 如果校验中 release 或 PR 发生变化、检查失败、review 要求修改，工作流会停止并保留 PR。修复后重新运行更新器。当 `main` 已前进，后续运行可以安全刷新自身 bot 创建、且 diff 能完全由已准入 release 重建的候选：用指定旧 head 的 force-with-lease 更新后重新执行两种架构检查，保留人类修改和 requested changes。存在其他自动 release PR、过期孤立分支或对应 release PR 已被关闭时，需要维护者检查：关闭过期 PR、删除对应自动分支，再重新运行。更新器不会撤销维护者关闭 PR 的决定。
@@ -46,12 +48,12 @@ GitHub 合并接口只能原子校验 PR head，没有 expected-base 参数。�
 维护者检查：
 
 ```sh
-node --test scripts/tap-update.test.cjs
+node --test scripts/*.test.cjs
 actionlint .github/workflows/check.yml .github/workflows/check-tap.yml .github/workflows/update-tap.yml
 node scripts/tap-update.cjs probe # 只读检查，使用已有 gh 登录状态
 ```
 
-用户机器上的 `brew update` 用来刷新 tap 元数据；使用 `brew upgrade --cask bigduu/tap/bodhi` 安装新版应用。
+用户机器上的 `brew update` 用来刷新 tap 元数据；使用 `brew upgrade --cask bigduu/tap/bodhi` 升级应用，再用 `brew upgrade bigduu/tap/jiandu bigduu/tap/nova` 升级两个配套工具。
 
 ## 许可证
 

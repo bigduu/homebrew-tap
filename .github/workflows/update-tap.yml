@@ -32,7 +32,7 @@ jobs:
         with:
           node-version: '22'
       - name: Run update contracts
-        run: node --test scripts/tap-update.test.cjs
+        run: node --test scripts/*.test.cjs
       - name: Prepare one exact version PR
         id: prepare
         env:
