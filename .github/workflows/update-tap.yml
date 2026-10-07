@@ -1,0 +1,80 @@
+name: Update tap releases
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: update-tap-releases
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.repository == 'bigduu/homebrew-tap' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      changed: ${{ steps.prepare.outputs.changed }}
+      candidate: ${{ steps.prepare.outputs.candidate }}
+      snapshot_artifact: tap-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Run update contracts
+        run: node --test scripts/*.test.cjs
+      - name: Prepare one exact version PR
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/tap-update.cjs prepare "$RUNNER_TEMP/tap-snapshot/snapshot.json"
+      - uses: actions/upload-artifact@v7
+        if: steps.prepare.outputs.changed == 'true'
+        with:
+          name: tap-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tap-snapshot/snapshot.json
+          if-no-files-found: error
+          retention-days: 7
+
+  audit:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    uses: ./.github/workflows/check-tap.yml
+    with:
+      ref: ${{ needs.prepare.outputs.candidate }}
+      snapshot_artifact: ${{ needs.prepare.outputs.snapshot_artifact }}
+
+  merge:
+    needs: [prepare, audit]
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.candidate }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.prepare.outputs.snapshot_artifact }}
+          path: ${{ runner.temp }}/tap-snapshot
+      - name: Recheck release, exact PR head/base, reviews and audited tree before merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/tap-update.cjs merge "$RUNNER_TEMP/tap-snapshot/snapshot.json"
