@@ -43,7 +43,7 @@ Nova formula 只安装命令行程序。单独发布的 Nova.app 压缩包标注
 
 如果校验中 release 或 PR 发生变化、检查失败、review 要求修改，工作流会停止并保留 PR。修复后重新运行更新器。当 `main` 已前进，后续运行可以安全刷新自身 bot 创建、且 diff 能完全由已准入 release 重建的候选：用指定旧 head 的 force-with-lease 更新后重新执行两种架构检查，保留人类修改和 requested changes。存在其他自动 release PR、过期孤立分支或对应 release PR 已被关闭时，需要维护者检查：关闭过期 PR、删除对应自动分支，再重新运行。更新器不会撤销维护者关闭 PR 的决定。
 
-GitHub 合并接口只能原子校验 PR head，没有 expected-base 参数。更新器在合并请求前紧邻检查 `main`，并核对实际落地的 tree；如果最终 API 调用间隙有其他提交推进基线，会报告失败。
+GitHub 合并接口只能原子校验 PR head，没有 expected-base 参数。更新器在合并请求前紧邻检查 `main`，并核对实际落地的 tree；如果最终 API 调用间隙有其他提交推进基线，会报告失败。分支删除也在 DELETE 前读回确切已审核 SHA，该接口没有 compare-and-swap 参数。分支已删除视为清理成功；读到 head 已移动时保留分支。
 
 维护者检查：
 

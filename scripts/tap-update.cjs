@@ -443,6 +443,26 @@ function assertReviews(reviewState) {
   // GitHub's merge endpoint remains authoritative for all branch protection rules.
 }
 
+function cleanupAuditedBranch(snapshot, request = api) {
+  const optional = (endpoint, method) => {
+    try {
+      return request(endpoint, method);
+    } catch (error) {
+      // gh preserves GitHub's structured HTTP error in stdout. Suppress only a
+      // definite missing-ref response; permission/network errors remain errors.
+      let response;
+      try { response = JSON.parse(String(error.stdout)); } catch { throw error; }
+      if (response.status === '404' || response.status === 404) return null;
+      throw error;
+    }
+  };
+  const ref = optional(`repos/${REPOSITORY}/git/ref/heads/${snapshot.branch}`, 'GET');
+  if (!ref) return 'already-absent';
+  if (ref.object.sha !== snapshot.headSha) return 'head-moved';
+  optional(`repos/${REPOSITORY}/git/refs/heads/${snapshot.branch}`, 'DELETE');
+  return 'deleted';
+}
+
 async function merge(snapshotPath) {
   assertMainRun();
   const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
@@ -468,13 +488,12 @@ async function merge(snapshotPath) {
   assert.equal(result.merged, true, 'GitHub did not merge the audited candidate');
   const landed = api(`repos/${REPOSITORY}/git/commits/${result.sha}`);
   assert.equal(landed.tree.sha, snapshot.treeSha, 'Merged tree differs from the audited candidate');
-  // Delete only the branch that still names our exact audited head.
-  const ref = api(`repos/${REPOSITORY}/git/ref/heads/${snapshot.branch}`);
-  if (ref.object.sha === snapshot.headSha) api(`repos/${REPOSITORY}/git/refs/heads/${snapshot.branch}`, 'DELETE');
-  output({ merged: true, versions: releaseSummary(snapshot.releases), pr: snapshot.prNumber, commit: result.sha });
+  // Read the exact audited ref before deletion; GitHub's DELETE has no CAS.
+  const cleanup = cleanupAuditedBranch(snapshot);
+  output({ merged: true, versions: releaseSummary(snapshot.releases), pr: snapshot.prNumber, commit: result.sha, cleanup });
 }
 
-module.exports = { admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, branchFor, compareVersions, hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload };
+module.exports = { admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, branchFor, cleanupAuditedBranch, compareVersions, hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload };
 if (require.main === module) {
   const [action, snapshotPath] = process.argv.slice(2);
   const task = action === 'probe' ? prepare('', true)

@@ -43,7 +43,7 @@ No PAT or additional secret is required. Repository administrators must enable *
 
 If a release or PR changes during validation, a check fails, or a review requests changes, the workflow stops and leaves the PR for inspection. Rerun the updater after correcting the failure. When `main` has advanced, a later run can refresh its own bot-authored candidate if its diff can be reconstructed solely from the admitted releases, using an exact-head force-with-lease before repeating both architecture checks. It preserves human edits and requested changes. A competing automated release PR, stale orphan branch, or previously closed release PR requires maintainer review: close obsolete PRs and delete their automation branches before running again. The updater does not undo a maintainer's closure.
 
-GitHub's merge endpoint guards the PR head but has no atomic expected-base option. The updater checks `main` immediately before the merge and verifies the landed tree afterwards; a concurrent base change in that final API interval is reported as a failure.
+GitHub's merge endpoint guards the PR head but has no atomic expected-base option. The updater checks `main` immediately before the merge and verifies the landed tree afterwards; a concurrent base change in that final API interval is reported as a failure. Branch deletion also reads the exact audited SHA before DELETE, whose API has no compare-and-swap parameter. An already-deleted branch is successful cleanup; a head observed to have moved is preserved.
 
 Maintainer checks:
 

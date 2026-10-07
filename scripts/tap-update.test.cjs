@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const {
-  admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, branchFor, compareVersions,
+  admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, branchFor, cleanupAuditedBranch, compareVersions,
   hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload,
 } = require('./tap-update.cjs');
 
@@ -211,6 +211,27 @@ test('inline matrix can merge past optional approval-waiting PR checks but requi
   assert.throws(() => assertReviews(reviews), /did not pass/);
   optional.conclusion = 'SUCCESS';
   assertReviews(reviews);
+});
+
+test('cleanup tolerates automatic deletion/read-delete races and preserves a moved branch head', () => {
+  const snapshot = { branch: 'automation/tap-fixture', headSha: SOURCE };
+  const missing = Object.assign(new Error('HTTP 404'), { stdout: JSON.stringify({ status: '404' }) });
+  assert.equal(cleanupAuditedBranch(snapshot, () => { throw missing; }), 'already-absent');
+  const calls = [];
+  assert.equal(cleanupAuditedBranch(snapshot, (endpoint, method) => {
+    calls.push([endpoint, method]);
+    if (method === 'GET') return { object: { sha: SOURCE } };
+    throw missing;
+  }), 'deleted');
+  assert.deepEqual(calls.map(call => call[1]), ['GET', 'DELETE']);
+  assert.equal(cleanupAuditedBranch(snapshot, (endpoint, method) => {
+    assert.equal(method, 'GET');
+    return { object: { sha: 'c'.repeat(40) } };
+  }), 'head-moved');
+  for (const error of [
+    Object.assign(new Error('HTTP 403'), { stdout: JSON.stringify({ status: '403' }) }),
+    Object.assign(new Error('Network EOF'), { stdout: '' }),
+  ]) assert.throws(() => cleanupAuditedBranch(snapshot, () => { throw error; }), value => value === error);
 });
 
 test('candidate gate checks the exact one-commit cask update and detects unrelated changes', () => {
