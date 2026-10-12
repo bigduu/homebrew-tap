@@ -1,8 +1,8 @@
 class Jiandu < Formula
   desc "Filesystem memory and MCP server for AI agents"
   homepage "https://github.com/bigduu/Jiandu"
-  url "https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.2.tar.gz"
-  sha256 "606c1f2c3c0d2bd46f546aaadcc0e0178ffca60aacb3dcadc077a1f38b168a97"
+  url "https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.3.tar.gz"
+  sha256 "35890f0992733f2db031a8621b8075afb5f1dad0e7bf2bd561e3865a36148080"
   license "MIT"
 
   depends_on "rust" => :build
