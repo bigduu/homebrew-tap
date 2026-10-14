@@ -1,9 +1,9 @@
 cask "bodhi" do
   arch arm: "aarch64", intel: "x64"
 
-  version "2026.10.10"
-  sha256 arm:   "de8d50e785beb5b0186e5b2835cc1b635afca2922c5e45670716ada0913fb874",
-         intel: "216763244dce459d4ddf61fd15e6cfdda276331406b45af2109f92aaaf20e655"
+  version "2026.10.11"
+  sha256 arm:   "01b3fad7484291a5d780e640568454f74dfbe7f516d00ef67c0a4832df76c6d1",
+         intel: "c86f5eb4d6c055801c02ab82389929b6823d168aa1280bdab1d9ea1e64befa3c"
 
   url "https://github.com/bigduu/Bodhi-AI/releases/download/app-v#{version}/Bodhi.AI_#{version}_#{arch}.dmg"
   name "Bodhi AI"
