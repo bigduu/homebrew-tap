@@ -1,17 +1,15 @@
 cask "bodhi" do
-  arch arm: "aarch64", intel: "x64"
+  version "2026.10.17"
+  sha256 "0eeff886c1b81e8193375fb17885a57287ecaeecc5d92dae440de66c6a0acdcd"
 
-  version "2026.10.16"
-  sha256 arm:   "85b1bed11b4d2cdf7e49c452f34bbcc0ca45de17f12d2eaaf9254b93d6a1a4fe",
-         intel: "f04d06b4c1a6992bb1fb3d4ce540899c48ba52052aff6154c4ae9c3b00fa7132"
-
-  url "https://github.com/bigduu/Bodhi-AI/releases/download/app-v#{version}/Bodhi.AI_#{version}_#{arch}.dmg"
+  url "https://github.com/bigduu/Bodhi-AI/releases/download/app-v#{version}/Bodhi.AI_#{version}_aarch64.dmg"
   name "Bodhi AI"
   desc "Desktop AI agent with Bamboo backend"
   homepage "https://github.com/bigduu/Bodhi-AI"
 
   depends_on formula: ["bigduu/tap/jiandu", "bigduu/tap/nova"]
   depends_on :macos
+  depends_on arch: :arm64
 
   app "Bodhi AI.app"
 

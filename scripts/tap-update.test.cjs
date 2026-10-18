@@ -14,8 +14,8 @@ const {
 const SOURCE = 'a'.repeat(40);
 const ARM = 'a'.repeat(64);
 const INTEL = 'b'.repeat(64);
-// Keep version fixtures stable after the real cask advances automatically.
-const currentCask = fs.readFileSync(path.join(__dirname, '../Casks/bodhi.rb'), 'utf8')
+// Keep the dual-architecture updater fixture independent of the ARM-only cask.
+const currentCask = fs.readFileSync(path.join(__dirname, 'fixtures/bodhi-dual-architecture.rb'), 'utf8')
   .replace(/^  version "[^"]+"$/m, '  version "2026.9.20"');
 const baseFiles = {
   'Casks/bodhi.rb': currentCask,
