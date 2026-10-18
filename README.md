@@ -12,7 +12,7 @@ brew install --cask bigduu/tap/bodhi
 
 Homebrew requires explicit trust to load formula dependencies from a third-party tap. `brew trust bigduu/tap` trusts this tap, including future packages from it.
 
-The Bodhi cask selects the Apple Silicon or Intel DMG automatically. It installs `jiandu` and `nova` as Homebrew formula dependencies. Bodhi already bundles its Bamboo backend. Homebrew manages the two command-line tools separately so `brew upgrade` can update them. Magpie is not a Bodhi cask dependency — install it separately when you need the Telegram/Feishu bridge.
+The Bodhi cask currently supports Apple Silicon (arm64). Bodhi 2026.10.17 has no Intel macOS installer, so Intel Macs are explicitly unsupported by this cask. It installs `jiandu` and `nova` as Homebrew formula dependencies. Bodhi already bundles its Bamboo backend. Homebrew manages the two command-line tools separately so `brew upgrade` can update them. Magpie is not a Bodhi cask dependency — install it separately when you need the Telegram/Feishu bridge.
 
 To install only one of the command-line tools, use its fully qualified name; Homebrew trusts that item for the install:
 
@@ -34,6 +34,8 @@ Maintainers: update the cask and formula versions only after their upstream rele
 ## Automatic tap updates
 
 The `Update tap releases` workflow checks the latest published stable releases of Bodhi, Jiandu, and Nova every six hours. It also supports a manual run from `main`. When all three match, it performs a read-only no-op. The updater refuses downgrades and changed digests at the same version. Bodhi's two DMGs and Nova's universal CLI archive must match their published asset digests. Jiandu is built from its released source tag, so the updater downloads its source archive to verify the SHA-256 even for a no-op.
+
+Bodhi 2026.10.17 uses a reviewed manual ARM-only cask update. The dual-DMG automatic updater stops when the Intel installer is absent; it cannot synthesize an Intel package for this release. CI verifies the ARM installation and the explicit Intel rejection while retaining formula checks on both architectures.
 
 For new versions, it resolves each upstream tag to an exact source commit and verifies all selected downloads, then opens one `automation/tap-<release-identity>` PR containing only the necessary cask/formula versions, URLs, and hashes. Dependencies and installation behavior stay intact. A snapshot fixes all three release identities, tap base, PR head, and candidate tree. The same workflow audits, fetches, and installs that exact candidate on Apple Silicon and Intel using the normal tap checks. It rechecks the releases, downloads, PR head/base, reviews, and required checks before merging the exact head. Version updates never push directly to `main`.
 
