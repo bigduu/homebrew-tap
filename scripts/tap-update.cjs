@@ -39,15 +39,29 @@ function readCask(text) {
   const versions = [...text.matchAll(/^  version "([^"]+)"$/gm)];
   const digests = [...text.matchAll(/^  sha256 arm:   "([a-f0-9]{64})",\n         intel: "([a-f0-9]{64})"$/gm)];
   assert.equal(versions.length, 1, 'Expected exactly one Bodhi cask version');
-  assert.equal(digests.length, 1, 'Expected exactly one architecture digest pair');
   assert.match(versions[0][1], VERSION);
   assert.ok(text.includes('cask "bodhi" do\n'), 'Unexpected cask identity');
+  const single = [...text.matchAll(/^  sha256 "([a-f0-9]{64})"$/gm)];
+  const armOnly = [...text.matchAll(/^  depends_on arch: :arm64$/gm)];
+  if (armOnly.length) {
+    assert.equal(armOnly.length, 1, 'Expected exactly one ARM-only architecture requirement');
+    assert.equal(single.length, 1, 'Expected exactly one ARM digest');
+    assert.equal(digests.length, 0, 'ARM-only cask cannot contain dual-architecture digests');
+    assert.ok(!/^  arch /m.test(text), 'ARM-only cask cannot select another architecture');
+    assert.ok(text.includes('  url "https://github.com/bigduu/Bodhi-AI/releases/download/app-v#{version}/Bodhi.AI_#{version}_aarch64.dmg"\n'), 'Unexpected ARM-only release URL');
+    return { version: versions[0][1], arm: single[0][1] };
+  }
+  assert.equal(single.length, 0, 'Dual-architecture cask cannot contain a single digest');
+  assert.equal(digests.length, 1, 'Expected exactly one architecture digest pair');
   assert.ok(text.includes('  arch arm: "aarch64", intel: "x64"\n'), 'Unexpected architecture mapping');
   assert.ok(text.includes('  url "https://github.com/bigduu/Bodhi-AI/releases/download/app-v#{version}/Bodhi.AI_#{version}_#{arch}.dmg"\n'), 'Unexpected release URL');
   return { version: versions[0][1], arm: digests[0][1], intel: digests[0][2] };
 }
 
-function admitRelease(release) {
+function admitRelease(release, caskText) {
+  // The reviewed cask selects the contract; no dispatch option drops a target.
+  // Omitted cask text keeps historical callers on the strict dual-DMG contract.
+  const contract = caskText === undefined ? { intel: true } : readCask(caskText);
   assert.equal(release.draft, false, 'Draft releases cannot update the tap');
   assert.equal(release.prerelease, false, 'Prereleases cannot update the tap');
   assert.ok(Number.isSafeInteger(release.id) && release.id > 0, 'Missing release id');
@@ -60,7 +74,8 @@ function admitRelease(release) {
   assert.equal(release.html_url, `https://github.com/${UPSTREAM}/releases/tag/${release.tag_name}`);
   assert.ok(Array.isArray(release.assets), 'Missing release assets');
   const assets = {};
-  for (const [arch, suffix] of [['arm', 'aarch64'], ['intel', 'x64']]) {
+  const targets = [['arm', 'aarch64'], ...(Object.hasOwn(contract, 'intel') ? [['intel', 'x64']] : [])];
+  for (const [arch, suffix] of targets) {
     const name = `Bodhi.AI_${version}_${suffix}.dmg`;
     const matches = release.assets.filter(asset => asset.name === name);
     assert.equal(matches.length, 1, `Expected exactly one ${name}`);
@@ -86,15 +101,19 @@ function admitRelease(release) {
 function renderCask(text, release) {
   assert.match(release.version, VERSION);
   assert.match(release.assets.arm.sha256, HASH);
-  assert.match(release.assets.intel.sha256, HASH);
   const current = readCask(text);
+  const dual = Object.hasOwn(current, 'intel');
+  assert.deepEqual(Object.keys(release.assets).sort(), dual ? ['arm', 'intel'] : ['arm'], 'Release assets differ from the reviewed cask architecture contract');
+  if (dual) assert.match(release.assets.intel.sha256, HASH);
   assert.ok(compareVersions(release.version, current.version) >= 0, 'Refusing to downgrade Bodhi');
   if (release.version === current.version) {
     assert.equal(current.arm, release.assets.arm.sha256, 'Published ARM digest changed at the current version');
-    assert.equal(current.intel, release.assets.intel.sha256, 'Published Intel digest changed at the current version');
+    if (dual) assert.equal(current.intel, release.assets.intel.sha256, 'Published Intel digest changed at the current version');
     return text;
   }
-  return text.replace(/^  version "[^"]+"$/m, `  version "${release.version}"`)
+  const versioned = text.replace(/^  version "[^"]+"$/m, `  version "${release.version}"`);
+  if (!dual) return versioned.replace(/^  sha256 "[a-f0-9]{64}"$/m, `  sha256 "${release.assets.arm.sha256}"`);
+  return versioned
     .replace(/^  sha256 arm:   "[a-f0-9]{64}",\n         intel: "[a-f0-9]{64}"$/m,
       `  sha256 arm:   "${release.assets.arm.sha256}",\n         intel: "${release.assets.intel.sha256}"`);
 }
@@ -182,7 +201,7 @@ async function latestReleases() {
     assert.equal(typeof raw.tag_name, 'string');
     assert.match(raw.tag_name, key === 'bodhi' ? /^app-v\d+\.\d+\.\d+$/ : /^v\d+\.\d+\.\d+$/);
     const sourceSha = resolveTag(product.repository, raw.tag_name);
-    const release = key === 'bodhi' ? admitRelease(raw) : admitFormulaRelease(raw, key, sourceSha);
+    const release = key === 'bodhi' ? admitRelease(raw, fs.readFileSync(CASK, 'utf8')) : admitFormulaRelease(raw, key, sourceSha);
     assert.equal(release.sourceSha, sourceSha, 'Release tag moved away from its exact source');
     if (key === 'jiandu') release.assets.archive = await downloadIdentity(release.assets.archive);
     releases[key] = release;

@@ -12,7 +12,7 @@ brew install --cask bigduu/tap/bodhi
 
 Homebrew 要求显式信任第三方 tap，才能加载其中的 formula 依赖。`brew trust bigduu/tap` 会信任这个 tap，包括它以后发布的包。
 
-Bodhi cask 会自动选择 Apple Silicon 或 Intel 的 DMG，并把 `jiandu` 和 `nova` 作为 Homebrew formula 依赖一起安装。Bodhi 已经内置了 Bamboo 后端。两个命令行工具由 Homebrew 单独管理，这样 `brew upgrade` 可以更新它们。Magpie 不是 Bodhi cask 的依赖——需要 Telegram/飞书桥接时再单独安装。
+Bodhi cask 当前支持 Apple Silicon（arm64），并把 `jiandu` 和 `nova` 作为 Homebrew formula 依赖一起安装。当前 cask 明确拒绝 Intel Mac。Bodhi 已经内置了 Bamboo 后端。两个命令行工具由 Homebrew 单独管理，这样 `brew upgrade` 可以更新它们。Magpie 不是 Bodhi cask 的依赖——需要 Telegram/飞书桥接时再单独安装。
 
 如果只想安装其中一个命令行工具，使用完整名称即可，Homebrew 会为这次安装信任该条目：
 
@@ -33,7 +33,7 @@ Nova formula 只安装命令行程序。单独发布的 Nova.app 压缩包标注
 
 ## 自动更新 tap
 
-`Update tap releases` 工作流每六小时检查一次 Bodhi、简牍 Jiandu、Nova 的最新公开稳定 release，也可以在 `main` 手动运行。三包都匹配时只读退出；拒绝降级，以及同版本下载摘要被替换的情况。Bodhi 的两种 DMG 和 Nova 的 universal CLI 压缩包必须匹配 release 资产摘要。简牍从发布的源码 tag 编译，因此即使版本未变，也会实际下载源码 archive 校验 SHA-256。
+`Update tap releases` 工作流每六小时检查一次 Bodhi、简牍 Jiandu、Nova 的最新公开稳定 release，也可以在 `main` 手动运行。三包都匹配时只读退出；拒绝降级，以及同版本下载摘要被替换的情况。Bodhi 按已审查 cask 选择的全部 DMG 和 Nova 的 universal CLI 压缩包必须匹配 release 资产摘要。当前 ARM-only cask 只选择确切的 ARM DMG，历史双架构 cask 仍要求两种 DMG。版本更新保留原架构契约、依赖和安装行为，缺少所选资产就停止。简牍从发布的源码 tag 编译，因此即使版本未变，也会实际下载源码 archive 校验 SHA-256。
 
 出现新版本时，更新器先解析每个上游 tag 对应的确切源码提交，并下载校验所选资产，再创建一个 `automation/tap-<release-identity>` PR，只修改必要 cask/formula 的版本、URL 和哈希；保留全部依赖和安装行为。快照固定三包的 release 身份、tap 基线、PR head 和候选 tree。同一次工作流在 Apple Silicon 和 Intel 上对这个确切候选运行正常 tap 的 audit、下载和安装检查；合并前再次核对 release、下载内容、PR head/base、review 和 required checks。版本更新始终经过 PR，不直接推送 `main`。
 
