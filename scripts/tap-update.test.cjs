@@ -17,6 +17,8 @@ const INTEL = 'b'.repeat(64);
 // Keep the dual-architecture updater fixture independent of the ARM-only cask.
 const currentCask = fs.readFileSync(path.join(__dirname, 'fixtures/bodhi-dual-architecture.rb'), 'utf8')
   .replace(/^  version "[^"]+"$/m, '  version "2026.9.20"');
+const armCask = fs.readFileSync(path.join(__dirname, '../Casks/bodhi.rb'), 'utf8')
+  .replace(/^  version "[^"]+"$/m, '  version "2026.9.20"');
 const baseFiles = {
   'Casks/bodhi.rb': currentCask,
   'Formula/jiandu.rb': fs.readFileSync(path.join(__dirname, '../Formula/jiandu.rb'), 'utf8')
@@ -106,6 +108,58 @@ test('same version is a no-op only when both digests still match', () => {
   assert.equal(renderCask(currentCask, admitRelease(raw)), currentCask);
   raw.assets[0].digest = `sha256:${ARM}`;
   assert.throws(() => renderCask(currentCask, admitRelease(raw)), /digest changed/);
+});
+
+test('the committed ARM-only cask selects only its exact ARM release asset', () => {
+  const current = readCask(armCask);
+  assert.deepEqual(Object.keys(current), ['version', 'arm']);
+  const raw = fixture();
+  raw.assets = [raw.assets[0]];
+  const release = admitRelease(raw, armCask);
+  assert.deepEqual(Object.keys(release.assets), ['arm']);
+  assert.equal(release.assets.arm.sha256, ARM);
+  const next = renderCask(armCask, release);
+  assert.deepEqual(readCask(next), { version: '2026.10.7', arm: ARM });
+  const redact = value => value.replace(/^  version .+$/m, '').replace(/^  sha256 .+$/m, '');
+  assert.equal(redact(next), redact(armCask));
+  assert.throws(() => renderCask(currentCask, release));
+  assert.throws(() => renderCask(armCask, admitRelease(fixture())));
+});
+
+test('ARM-only admission retains exact source and uploaded asset identity guards', () => {
+  for (const alter of [
+    r => { r.draft = true; }, r => { r.prerelease = true; },
+    r => { r.target_commitish = 'main'; }, r => { r.assets = []; },
+    r => { r.assets.push(r.assets[0]); }, r => { r.assets[0].state = 'new'; },
+    r => { r.assets[0].digest = null; }, r => { r.assets[0].size = 0; },
+    r => { r.assets[0].browser_download_url = 'https://example.invalid/foreign.dmg'; },
+  ]) {
+    const raw = fixture();
+    raw.assets = [raw.assets[0]];
+    alter(raw);
+    assert.throws(() => admitRelease(raw, armCask));
+  }
+});
+
+test('ARM-only same-version updates are immutable and downgrades are rejected', () => {
+  const current = readCask(armCask);
+  const raw = fixture(current.version);
+  raw.assets = [raw.assets[0]];
+  raw.assets[0].digest = `sha256:${current.arm}`;
+  assert.equal(renderCask(armCask, admitRelease(raw, armCask)), armCask);
+  raw.assets[0].digest = `sha256:${ARM}`;
+  assert.throws(() => renderCask(armCask, admitRelease(raw, armCask)), /digest changed/);
+  assert.throws(() => renderCask(armCask, admitRelease(fixture('2026.1.1'), armCask)), /downgrade/);
+});
+
+test('mixed or unsupported cask architecture contracts fail closed', () => {
+  for (const source of [
+    armCask.replace('  depends_on arch: :arm64\n', ''),
+    armCask.replace('  depends_on arch: :arm64\n', '  depends_on arch: :intel\n'),
+    armCask.replace('_aarch64.dmg', '_#{arch}.dmg'),
+    armCask + `\n  sha256 "${ARM}"\n`,
+    armCask.replace('  depends_on arch: :arm64\n', '  depends_on arch: :arm64\n  arch arm: "aarch64", intel: "x64"\n'),
+  ]) assert.throws(() => readCask(source));
 });
 
 test('formula releases use resolved tags even when target_commitish names a moving branch', () => {
@@ -291,17 +345,20 @@ test('candidate gate checks the exact one-commit cask update and detects unrelat
   }
 });
 
-test('matching three releases prepare is read-only and verifies Jiandu source bytes without a PR', () => {
+for (const [contract, cask] of [['dual', currentCask], ['ARM-only', armCask]]) {
+test(`matching three releases prepare (${contract}) is read-only and verifies Jiandu source bytes without a PR`, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bodhi-noop-test-'));
   try {
     fs.mkdirSync(path.join(directory, 'Casks'));
     fs.mkdirSync(path.join(directory, 'Formula'));
-    const files = { ...baseFiles, 'Formula/jiandu.rb': baseFiles['Formula/jiandu.rb'].replace(/^  sha256 .+$/m, `  sha256 "${hash('abc')}"`) };
+    const files = { ...baseFiles, 'Casks/bodhi.rb': cask,
+      'Formula/jiandu.rb': baseFiles['Formula/jiandu.rb'].replace(/^  sha256 .+$/m, `  sha256 "${hash('abc')}"`) };
     for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(directory, file), text);
-    const current = readCask(currentCask);
+    const current = readCask(cask);
     const raw = fixture(current.version);
     raw.assets[0].digest = `sha256:${current.arm}`;
-    raw.assets[1].digest = `sha256:${current.intel}`;
+    if (current.intel) raw.assets[1].digest = `sha256:${current.intel}`;
+    else raw.assets = [raw.assets[0]];
     const fakeGh = path.join(directory, 'gh');
     fs.writeFileSync(fakeGh, '#!/usr/bin/env node\nconst fs = require("node:fs");\nfs.appendFileSync(process.env.TAP_TEST_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");\nconst releases = JSON.parse(process.env.TAP_TEST_RELEASES);\nconst endpoint = process.argv[3];\nconsole.log(JSON.stringify(endpoint.includes("/git/ref/tags/") ? {object:{type:"commit",sha:process.env.TAP_TEST_TAG_SHA || "a".repeat(40)}} : releases[endpoint.split("/")[2]]));\n');
     fs.chmodSync(fakeGh, 0o755);
@@ -328,6 +385,7 @@ test('matching three releases prepare is read-only and verifies Jiandu source by
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+}
 
 test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and preserves a human-edited stale head', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tap-prepare-test-'));
