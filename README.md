@@ -33,6 +33,14 @@ Maintainers: update the cask and formula versions only after their upstream rele
 
 ## Automatic tap updates
 
+Agents and maintainers follow [AGENTS.md](AGENTS.md) and the
+[shared delivery workflow](https://github.com/bigduu/Zenith/blob/main/docs/delivery-workflow.md).
+PRs own their contract and native installation checks; main stores the accepted
+definitions without another postmerge audit. The updater owns its prepared
+candidate's reliable native audit. Authenticated reuse across an automatic PR's
+additional trigger remains tracked in [#24](https://github.com/bigduu/homebrew-tap/issues/24);
+do not count a skipped check as an accepted installation.
+
 The `Update tap releases` workflow checks the latest published stable releases of Bodhi, Jiandu, and Nova every six hours. It also supports a manual run from `main`. When all three match, it performs a read-only no-op. The updater refuses downgrades and changed digests at the same version. Every Bodhi DMG selected by the reviewed cask and Nova's universal CLI archive must match their published asset digests. Jiandu is built from its released source tag, so the updater downloads its source archive to verify the SHA-256 even for a no-op.
 
 The current ARM-only cask selects the exact ARM DMG. Historical dual-architecture casks continue to require both DMGs. Version updates preserve that reviewed architecture contract, dependencies and installation behavior; missing selected assets stop the update. CI verifies the ARM installation and the explicit Intel rejection while retaining formula checks on both architectures.

@@ -1,5 +1,11 @@
 # bigduu Homebrew tap
 
+维护和 agent 协作遵循 [AGENTS.md](AGENTS.md) 与
+[统一交付流程](https://github.com/bigduu/Zenith/blob/main/docs/delivery-workflow.md)。
+测试由候选 PR 完成，main 保存接受的版本、URL 和哈希，不在合并后重跑同一套验收。
+自动更新器保留对精确候选的可靠原生验收；其与额外 PR 触发器之间的已验收结果复用
+仍由 [#24](https://github.com/bigduu/homebrew-tap/issues/24) 跟踪，不能把 skipped 当作验收通过。
+
 [English](README.md) · [简体中文](README.zh-CN.md)
 
 这个 tap 用来安装 [Bodhi AI](https://github.com/bigduu/Bodhi-AI)，以及 [简牍 Jiandu](https://github.com/bigduu/Jiandu)、[Nova](https://github.com/bigduu/Nova) 和 [Magpie](https://github.com/bigduu/Magpie) 命令行工具。
