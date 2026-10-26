@@ -184,6 +184,13 @@ test('artifact download admits one plain snapshot file and rejects missing/expir
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('reusable audit PR number is explicitly formatted for its string input contract', () => {
+  const caller = fs.readFileSync(path.join(__dirname, '../.github/workflows/check.yml'), 'utf8');
+  const callee = fs.readFileSync(path.join(__dirname, '../.github/workflows/check-tap.yml'), 'utf8');
+  assert.match(caller, /reuse_pr_number: \$\{\{ format\('\{0\}', github\.event\.pull_request\.number\) \}\}/);
+  assert.match(callee, /reuse_pr_number:\n        default: ''\n        type: string/);
+});
+
 test('first-landing route runs real ordinary checks and cannot turn a claim into a bootstrap success', () => {
   const source = fs.readFileSync(path.join(__dirname, '../.github/workflows/check.yml'), 'utf8');
   const script = source.match(/id: select\n        run: \|\n([\s\S]*?)\n      - uses:/)[1].replace(/^ {10}/gm, '');

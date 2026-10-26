@@ -119,7 +119,7 @@ jobs:
       routing_result: ${{ needs.route.result }}
       reuse_run_id: ${{ needs.route.outputs.run_id }}
       reuse_run_attempt: ${{ needs.route.outputs.run_attempt }}
-      reuse_pr_number: ${{ github.event.pull_request.number }}
+      reuse_pr_number: ${{ format('{0}', github.event.pull_request.number) }}
       reuse_base_sha: ${{ github.event.pull_request.base.sha }}
 
   acceptance:
