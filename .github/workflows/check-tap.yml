@@ -11,9 +11,29 @@ on:
         description: Prepared tap update snapshot from this workflow run
         default: ''
         type: string
+      routing_result:
+        description: PR routing must succeed before either native execution or proof reuse
+        default: success
+        type: string
+      reuse_run_id:
+        description: Original updater run locator, authenticated by the trusted verifier
+        default: ''
+        type: string
+      reuse_run_attempt:
+        description: Original prepare/snapshot attempt, retained across merge-only retries
+        default: ''
+        type: string
+      reuse_pr_number:
+        default: ''
+        type: string
+      reuse_base_sha:
+        default: ''
+        type: string
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 jobs:
   audit:
@@ -21,45 +41,72 @@ jobs:
       fail-fast: false
       matrix:
         runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ (inputs.routing_result != 'success' || inputs.reuse_run_id != '') && 'ubuntu-latest' || matrix.runner }}
+    timeout-minutes: ${{ inputs.reuse_run_id != '' && 90 || 360 }}
     steps:
+      - name: Require successful candidate routing
+        env:
+          ROUTE_RESULT: ${{ inputs.routing_result }}
+        run: test "$ROUTE_RESULT" = success
       - name: Require the expected native test architecture
+        if: inputs.reuse_run_id == ''
         env:
           EXPECTED_RUNNER_ARCH: ${{ matrix.runner == 'macos-15' && 'ARM64' || 'X64' }}
           ACTUAL_RUNNER_ARCH: ${{ runner.arch }}
         run: test "$ACTUAL_RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.reuse_run_id != '' && inputs.reuse_base_sha || inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+      - uses: actions/checkout@v6
+        if: inputs.reuse_run_id != ''
+        with:
+          ref: ${{ inputs.ref }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify original native acceptance for this exact candidate and architecture
+        if: inputs.reuse_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_PR_NUMBER: ${{ inputs.reuse_pr_number }}
+          TAP_PR_HEAD: ${{ inputs.ref }}
+          TAP_PR_BASE: ${{ inputs.reuse_base_sha }}
+          TAP_AUDIT_RUN_ID: ${{ inputs.reuse_run_id }}
+          TAP_AUDIT_RUN_ATTEMPT: ${{ inputs.reuse_run_attempt }}
+          TAP_AUDIT_TARGET: ${{ matrix.runner }}
+        run: node scripts/tap-audit-proof.cjs verify "$RUNNER_TEMP/tap-native-proof" "$GITHUB_WORKSPACE/candidate"
       - uses: actions/download-artifact@v7
-        if: inputs.snapshot_artifact != ''
+        if: inputs.reuse_run_id == '' && inputs.snapshot_artifact != ''
         with:
           name: ${{ inputs.snapshot_artifact }}
           path: ${{ runner.temp }}/tap-snapshot
       - name: Verify prepared candidate before running Homebrew
-        if: inputs.snapshot_artifact != ''
+        if: inputs.reuse_run_id == '' && inputs.snapshot_artifact != ''
         run: node scripts/tap-update.cjs verify "$RUNNER_TEMP/tap-snapshot/snapshot.json"
       - name: Register checked-out tap
+        if: inputs.reuse_run_id == ''
         run: |
           brew tap bigduu/tap "$GITHUB_WORKSPACE"
           brew trust bigduu/tap
       - name: Audit formulae and cask
+        if: inputs.reuse_run_id == ''
         run: |
           brew audit --strict --formula bigduu/tap/jiandu bigduu/tap/nova bigduu/tap/magpie
           brew audit --strict --cask bigduu/tap/bodhi
       - name: Fetch and verify release assets
+        if: inputs.reuse_run_id == ''
         run: |
           brew fetch --formula bigduu/tap/jiandu bigduu/tap/nova bigduu/tap/magpie
       - name: Fetch and verify ARM Bodhi release
-        if: runner.arch == 'ARM64'
+        if: inputs.reuse_run_id == '' && runner.arch == 'ARM64'
         run: brew fetch --cask bigduu/tap/bodhi
       - name: Verify original Bodhi signing before the cask modifies the app
-        if: runner.arch == 'ARM64'
+        if: inputs.reuse_run_id == '' && runner.arch == 'ARM64'
         run: |
           mountpoint="$(mktemp -d "$RUNNER_TEMP/bodhi-original.XXXXXX")"
           cleanup() {
@@ -72,12 +119,13 @@ jobs:
           /usr/bin/hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mountpoint"
           node scripts/verify-bodhi-signing.cjs "$mountpoint/Bodhi AI.app"
       - name: Check installation plan
-        if: runner.arch == 'ARM64'
+        if: inputs.reuse_run_id == '' && runner.arch == 'ARM64'
         run: brew install --dry-run --cask bigduu/tap/bodhi
       - name: Install formula dependencies in both architectures
+        if: inputs.reuse_run_id == ''
         run: brew install --formula bigduu/tap/jiandu bigduu/tap/nova
       - name: Install ARM Bodhi in the disposable runner
-        if: runner.arch == 'ARM64'
+        if: inputs.reuse_run_id == '' && runner.arch == 'ARM64'
         run: |
           mkdir -p "$RUNNER_TEMP/bodhi-apps"
           brew install --cask --appdir="$RUNNER_TEMP/bodhi-apps" bigduu/tap/bodhi
@@ -92,7 +140,7 @@ jobs:
             exit 1
           fi
       - name: Verify Intel rejects the ARM-only Bodhi cask
-        if: runner.arch == 'X64'
+        if: inputs.reuse_run_id == '' && runner.arch == 'X64'
         run: |
           brew info --json=v2 --cask bigduu/tap/bodhi | jq -e '.casks[0].depends_on.arch == [{"type":"arm","bits":64}]'
           if brew install --cask --appdir="$RUNNER_TEMP/bodhi-unsupported" bigduu/tap/bodhi > "$RUNNER_TEMP/bodhi-unsupported.log" 2>&1; then
@@ -103,15 +151,18 @@ jobs:
           cat "$RUNNER_TEMP/bodhi-unsupported.log"
           grep -F 'This cask depends on hardware architecture being one of' "$RUNNER_TEMP/bodhi-unsupported.log"
       - name: Verify formula dependencies in both architectures
+        if: inputs.reuse_run_id == ''
         run: |
           test -x "$(brew --prefix)/bin/jiandu"
           test -x "$(brew --prefix)/bin/nova"
           jiandu --help
           nova --version
       - name: Install magpie
+        if: inputs.reuse_run_id == ''
         run: |
           brew install --formula bigduu/tap/magpie
           magpie --version
       - name: Verify cask dependencies
+        if: inputs.reuse_run_id == ''
         run: |
           brew info --json=v2 --cask bigduu/tap/bodhi | jq -e '.casks[0].depends_on.formula | index("bigduu/tap/jiandu") and index("bigduu/tap/nova")'

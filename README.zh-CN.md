@@ -3,8 +3,9 @@
 维护和 agent 协作遵循 [AGENTS.md](AGENTS.md) 与
 [统一交付流程](https://github.com/bigduu/Zenith/blob/main/docs/delivery-workflow.md)。
 测试由候选 PR 完成，main 保存接受的版本、URL 和哈希，不在合并后重跑同一套验收。
-自动更新器保留对精确候选的可靠原生验收；其与额外 PR 触发器之间的已验收结果复用
-仍由 [#24](https://github.com/bigduu/homebrew-tap/issues/24) 跟踪，不能把 skipped 当作验收通过。
+自动更新器保留对精确候选的可靠原生验收。
+[#24](https://github.com/bigduu/homebrew-tap/issues/24) 合并后，自动 PR 的额外触发会认证原始
+审计，复用已成功的 Unit 和双架构安装结果；普通 PR 仍实际运行这些检查。
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -43,9 +44,13 @@ Nova formula 只安装命令行程序。单独发布的 Nova.app 压缩包标注
 
 出现新版本时，更新器先解析每个上游 tag 对应的确切源码提交，并下载校验所选资产，再创建一个 `automation/tap-<release-identity>` PR，只修改必要 cask/formula 的版本、URL 和哈希；保留全部依赖和安装行为。快照固定三包的 release 身份、tap 基线、PR head 和候选 tree。同一次工作流在 Apple Silicon 和 Intel 上对这个确切候选运行正常 tap 的 audit、下载和安装检查；合并前再次核对 release、下载内容、PR head/base、review 和 required checks。版本更新始终经过 PR，不直接推送 `main`。
 
+PR 正文记录原始 run/prepare attempt 的定位信息。只读检查从确切的可信 PR base 加载校验器，核对 workflow ID/路径、仓库、main 上的定时/手动控制器、不可变快照和实时候选，再要求原始 Unit 和对应架构安装 job 成功。定位信息或 bot 分支名称本身不能取得复用资格；缺失、外来、过期、失败和 skipped 证据都不能通过。原有检查名与 `Tap Acceptance` 汇总只承认实际通过的检查或认证后的原始成功结果。首次落地校验器的人类 PR 仍运行真实 Unit 和原生安装检查；可信 base 含有校验器后才启用自动复用。
+
+证据检查只等待 prepare/native jobs，不等待更新器最终 merge 或整个 run 完成，因此待批准的 PR 不会造成这种循环依赖。只重试 merge 时保留原始快照 attempt 和成功的原生结果；只重试失败架构时保留成功的另一架构，并核对该失败目标最新一次 attempt 的真实结果。重新执行 prepare 则必须使用新定位信息与快照。历史快照保留旧合并契约，但不能充当新自动 PR 证据。Jiandu 的安装仍会从已发布源码编译；二进制 formula 迁移属于独立工作。
+
 检查在安装 postflight 前只读挂载已下载的 Bodhi DMG，校验应用原始签名，只准入当前有效的 ad-hoc 签名。出现 Developer ID/证书签名或未知签名状态时会停止更新，要求维护者先迁移临时 quarantine/签名 workaround，再接受该版本。
 
-无需 PAT 或新增 secret。仓库管理员需要启用 **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**。工作流默认权限保持只读，只有更新器的 prepare 和 merge job 申请 `contents: write` 与 `pull-requests: write`。由于 `GITHUB_TOKEN` 创建的 PR 工作流可能需要批准，更新器在同一次运行内完成检查；分支保护仍然约束合并。
+无需 PAT 或新增 secret。仓库管理员需要启用 **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**。工作流默认权限保持只读，只有更新器的 prepare 和 merge job 申请 `contents: write` 与 `pull-requests: write`。校验器只增加 Actions 和 PR 的读取权限。`GITHUB_TOKEN` PR 工作流未启动或等待批准时，更新器仍保留自身的真实检查；required checks 和分支保护继续约束合并，此变更不会修改保护规则或绕过待完成检查。
 
 如果校验中 release 或 PR 发生变化、检查失败、review 要求修改，工作流会停止并保留 PR。修复后重新运行更新器。当 `main` 已前进，后续运行可以安全刷新自身 bot 创建、且 diff 能完全由已准入 release 重建的候选：用指定旧 head 的 force-with-lease 更新后重新执行两种架构检查，保留人类修改和 requested changes。存在其他自动 release PR、过期孤立分支或对应 release PR 已被关闭时，需要维护者检查：关闭过期 PR、删除对应自动分支，再重新运行。更新器不会撤销维护者关闭 PR 的决定。
 

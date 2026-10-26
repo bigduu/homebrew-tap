@@ -2,22 +2,135 @@ name: Check tap
 
 on:
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 jobs:
-  update-tests:
+  route:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      run_id: ${{ steps.select.outputs.run_id }}
+      run_attempt: ${{ steps.select.outputs.run_attempt }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAP_PR_NUMBER: ${{ github.event.pull_request.number }}
+      TAP_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      TAP_PR_BASE: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - run: node --test scripts/*.test.cjs
+      - name: Locate the original audit with the trusted base verifier
+        id: select
+        run: |
+          if test -f scripts/tap-audit-proof.cjs; then
+            node scripts/tap-audit-proof.cjs select
+          else
+            # First landing: the trusted base has no verifier yet. Only a human
+            # PR with no reuse claim may proceed to the real Unit/native jobs.
+            node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          assert.equal(process.env.GITHUB_REPOSITORY, 'bigduu/homebrew-tap');
+          const number = Number(process.env.TAP_PR_NUMBER);
+          assert.ok(Number.isSafeInteger(number) && number > 0);
+          const pr = JSON.parse(execFileSync('gh', ['api', `repos/bigduu/homebrew-tap/pulls/${number}`], { encoding: 'utf8' }));
+          assert.equal(pr.head.sha, process.env.TAP_PR_HEAD);
+          assert.equal(pr.base.sha, process.env.TAP_PR_BASE);
+          assert.notEqual(pr.user.login, 'github-actions[bot]', 'Automatic proof requires the trusted verifier');
+          assert.ok(!(pr.body || '').includes('<!-- tap-audit:'), 'Audit reuse requires the trusted verifier');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'mode=ordinary\nrun_id=\nrun_attempt=\n');
+          NODE
+          fi
+      - uses: actions/checkout@v6
+        if: steps.select.outputs.mode == 'reuse'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Authenticate the original candidate and contract-test proof
+        if: steps.select.outputs.mode == 'reuse'
+        env:
+          TAP_AUDIT_RUN_ID: ${{ steps.select.outputs.run_id }}
+          TAP_AUDIT_RUN_ATTEMPT: ${{ steps.select.outputs.run_attempt }}
+        run: node scripts/tap-audit-proof.cjs verify "$RUNNER_TEMP/tap-route-proof" "$GITHUB_WORKSPACE/candidate"
+      - name: Require an explicit execution or reuse route
+        env:
+          MODE: ${{ steps.select.outputs.mode }}
+        run: test "$MODE" = ordinary || test "$MODE" = reuse
+
+  update-tests:
+    needs: route
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Require successful candidate routing
+        env:
+          ROUTE_RESULT: ${{ needs.route.result }}
+          MODE: ${{ needs.route.outputs.mode }}
+        run: test "$ROUTE_RESULT" = success && { test "$MODE" = ordinary || test "$MODE" = reuse; }
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.route.outputs.mode == 'reuse' && github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Run ordinary PR contract tests
+        if: needs.route.outputs.mode == 'ordinary'
+        run: node --test scripts/*.test.cjs
+      - uses: actions/checkout@v6
+        if: needs.route.outputs.mode == 'reuse'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify original automatic-candidate contract tests
+        if: needs.route.outputs.mode == 'reuse'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_PR_NUMBER: ${{ github.event.pull_request.number }}
+          TAP_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          TAP_PR_BASE: ${{ github.event.pull_request.base.sha }}
+          TAP_AUDIT_RUN_ID: ${{ needs.route.outputs.run_id }}
+          TAP_AUDIT_RUN_ATTEMPT: ${{ needs.route.outputs.run_attempt }}
+        run: node scripts/tap-audit-proof.cjs verify "$RUNNER_TEMP/tap-unit-proof" "$GITHUB_WORKSPACE/candidate"
+
   audit:
+    needs: route
+    if: always()
     uses: ./.github/workflows/check-tap.yml
     with:
-      ref: ${{ github.sha }}
+      ref: ${{ needs.route.outputs.mode == 'reuse' && github.event.pull_request.head.sha || github.sha }}
+      routing_result: ${{ needs.route.result }}
+      reuse_run_id: ${{ needs.route.outputs.run_id }}
+      reuse_run_attempt: ${{ needs.route.outputs.run_attempt }}
+      reuse_pr_number: ${{ github.event.pull_request.number }}
+      reuse_base_sha: ${{ github.event.pull_request.base.sha }}
+
+  acceptance:
+    name: Tap Acceptance
+    needs: [route, update-tests, audit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require real ordinary checks or authenticated original checks
+        env:
+          ROUTE: ${{ needs.route.result }}
+          UNIT: ${{ needs.update-tests.result }}
+          NATIVE: ${{ needs.audit.result }}
+        run: test "$ROUTE" = success && test "$UNIT" = success && test "$NATIVE" = success
