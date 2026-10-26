@@ -33,15 +33,44 @@ Maintainers: update the cask and formula versions only after their upstream rele
 
 ## Automatic tap updates
 
+Agents and maintainers follow [AGENTS.md](AGENTS.md) and the
+[shared delivery workflow](https://github.com/bigduu/Zenith/blob/main/docs/delivery-workflow.md).
+PRs own their contract and native installation checks; main stores the accepted
+definitions without another postmerge audit. The updater owns its prepared
+candidate's native audit. After [#24](https://github.com/bigduu/homebrew-tap/issues/24)
+lands, an automatic PR's additional trigger verifies that original audit instead
+of repeating Unit or installation checks. Ordinary PRs still run their real
+contract and two-architecture installation tests.
+
 The `Update tap releases` workflow checks the latest published stable releases of Bodhi, Jiandu, and Nova every six hours. It also supports a manual run from `main`. When all three match, it performs a read-only no-op. The updater refuses downgrades and changed digests at the same version. Every Bodhi DMG selected by the reviewed cask and Nova's universal CLI archive must match their published asset digests. Jiandu is built from its released source tag, so the updater downloads its source archive to verify the SHA-256 even for a no-op.
 
 The current ARM-only cask selects the exact ARM DMG. Historical dual-architecture casks continue to require both DMGs. Version updates preserve that reviewed architecture contract, dependencies and installation behavior; missing selected assets stop the update. CI verifies the ARM installation and the explicit Intel rejection while retaining formula checks on both architectures.
 
 For new versions, it resolves each upstream tag to an exact source commit and verifies all selected downloads, then opens one `automation/tap-<release-identity>` PR containing only the necessary cask/formula versions, URLs, and hashes. Dependencies and installation behavior stay intact. A snapshot fixes all three release identities, tap base, PR head, and candidate tree. The same workflow audits, fetches, and installs that exact candidate on Apple Silicon and Intel using the normal tap checks. It rechecks the releases, downloads, PR head/base, reviews, and required checks before merging the exact head. Version updates never push directly to `main`.
 
+The PR body records an original run/prepare-attempt locator. Read-only PR jobs
+use the verifier from the exact trusted base to authenticate the workflow ID and
+path, repository, scheduled/manual main controller, immutable snapshot and live
+candidate, then require successful original Unit and architecture-specific audit
+jobs. A locator or bot branch name alone grants no reuse. Missing, foreign, stale,
+failed or skipped evidence stops admission. The existing check names and the
+`Tap Acceptance` aggregate pass only on real checks or authenticated successful
+original checks. The first human PR landing the verifier runs the ordinary real
+checks; automatic reuse is unavailable until the trusted base contains it.
+
+Proof jobs wait for prepare/native jobs only. They do not wait for the updater's
+merge job or whole-run conclusion, so an approval-pending PR cannot create that
+dependency cycle. A merge-only retry keeps the original snapshot attempt and
+successful native results. A failed-native-only retry retains successful sibling
+results and verifies the latest attempt of the failed target; rerunning prepare
+requires its new locator and snapshot. Historical snapshots keep their existing
+merge contract but cannot provide new automatic-PR proof. Jiandu still compiles
+its published source during native installation; a binary formula needs a
+separate producer migration.
+
 Before any installation postflight, the checks mount the downloaded Bodhi DMG read-only and verify the original app's signature. Only the current valid ad-hoc signing class is admitted. A Developer ID/certificate signature or unknown signing state stops the update so a maintainer can migrate the temporary quarantine/signing workaround before accepting that release.
 
-No PAT or additional secret is required. Repository administrators must enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**. Keep the default workflow permission at read-only; only the updater's prepare and merge jobs request `contents: write` and `pull-requests: write`. The updater runs its own checks because PR workflows created with `GITHUB_TOKEN` can require approval. Branch protection continues to apply to its merge.
+No PAT or additional secret is required. Repository administrators must enable **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**. Keep the default workflow permission at read-only; only the updater's prepare and merge jobs request `contents: write` and `pull-requests: write`. The verifier adds only Actions and pull-request read access. The updater retains its own checks when a `GITHUB_TOKEN` PR workflow does not start or awaits approval. Required checks and branch protection continue to apply to its merge; this change does not alter protection settings or bypass pending required checks.
 
 If a release or PR changes during validation, a check fails, or a review requests changes, the workflow stops and leaves the PR for inspection. Rerun the updater after correcting the failure. When `main` has advanced, a later run can refresh its own bot-authored candidate if its diff can be reconstructed solely from the admitted releases, using an exact-head force-with-lease before repeating both architecture checks. It preserves human edits and requested changes. A competing automated release PR, stale orphan branch, or previously closed release PR requires maintainer review: close obsolete PRs and delete their automation branches before running again. The updater does not undo a maintainer's closure.
 

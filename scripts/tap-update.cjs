@@ -269,6 +269,15 @@ function assertMainRun() {
   assert.ok(['schedule', 'workflow_dispatch'].includes(process.env.GITHUB_EVENT_NAME), 'Unexpected update trigger');
 }
 
+function auditLocator(audit) {
+  for (const value of [audit.runId, audit.runAttempt]) assert.ok(Number.isSafeInteger(value) && value > 0, 'Invalid original audit run/attempt');
+  return `<!-- tap-audit:v1 run=${audit.runId} attempt=${audit.runAttempt} -->`;
+}
+
+function withAuditLocator(body, audit) {
+  return `${(body || '').replace(/<!-- tap-audit:[\s\S]*?-->/g, '').trim()}\n\n${auditLocator(audit)}\n`;
+}
+
 function openUpdates() {
   return JSON.parse(command('gh', ['pr', 'list', '--repo', REPOSITORY, '--base', 'main', '--state', 'open',
     '--limit', '100', '--json', 'number,url,headRefName,headRefOid,baseRefOid,isDraft']))
@@ -354,6 +363,9 @@ async function prepare(snapshotPath, probe = false) {
   assertMainRun();
   const baseSha = mainSha();
   assert.match(baseSha, SHA);
+  assert.equal(process.env.GITHUB_SHA, baseSha, 'Updater controller is not the exact main base');
+  const audit = { runId: Number(process.env.GITHUB_RUN_ID), runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), controllerSha: baseSha };
+  auditLocator(audit);
   assert.equal(git('rev-parse', 'HEAD'), baseSha, 'Prepare checkout is no longer the exact main base');
   assert.equal(git('status', '--porcelain'), '', 'Prepare checkout is dirty');
   const branch = branchFor(releases);
@@ -379,10 +391,21 @@ async function prepare(snapshotPath, probe = false) {
     commitCandidate(branch, baseSha, candidates);
   }
   const headSha = git('rev-parse', 'HEAD');
-  const snapshot = snapshotFor(baseSha, releases, baseFiles, 1);
+  const snapshot = { ...snapshotFor(baseSha, releases, baseFiles, 1), audit };
   verifyCandidate(snapshot);
   assert.equal(mainSha(), baseSha, 'Main moved before PR preparation');
   assert.deepEqual(await latestReleases(), releases, 'Latest releases changed before PR preparation');
+  if (updates[0]) {
+    const live = api(`repos/${REPOSITORY}/pulls/${updates[0].number}`);
+    assertPullRequest(live, { ...snapshot, headSha: refreshHead || headSha });
+    const body = withAuditLocator(live.body, audit);
+    if (live.body !== body) {
+      try { api(`repos/${REPOSITORY}/pulls/${live.number}`, 'PATCH', { body }); }
+      catch (error) {
+        if (api(`repos/${REPOSITORY}/pulls/${live.number}`).body !== body) throw error;
+      }
+    }
+  }
   if (refreshHead) {
     const pr = api(`repos/${REPOSITORY}/pulls/${updates[0].number}`);
     assertPullRequest(pr, { ...snapshot, headSha: refreshHead });
@@ -399,7 +422,7 @@ async function prepare(snapshotPath, probe = false) {
     try {
       pr = api(`repos/${REPOSITORY}/pulls`, 'POST', {
         head: branch, base: 'main', title: `chore: update tap releases (${releaseSummary(releases)})`,
-        body: `Update the tap to the latest published stable releases:\n\n${Object.entries(releases).map(([key, release]) => `- ${key}: [${release.tag}](${release.url}), source ${release.sourceSha}`).join('\n')}\n\nAll selected downloads are SHA-256 verified. The updater checks this exact candidate on ARM and Intel before merging. Only package URLs, versions and hashes change.\n\nPrepared base: ${baseSha}\nCandidate: ${headSha}\n`,
+        body: withAuditLocator(`Update the tap to the latest published stable releases:\n\n${Object.entries(releases).map(([key, release]) => `- ${key}: [${release.tag}](${release.url}), source ${release.sourceSha}`).join('\n')}\n\nAll selected downloads are SHA-256 verified. The updater checks this exact candidate on ARM and Intel before merging. Only package URLs, versions and hashes change.\n\nPrepared base: ${baseSha}\nCandidate: ${headSha}\n`, audit),
       });
     } catch (error) {
       // A network failure may follow a successful write; read back before retrying.
@@ -512,7 +535,7 @@ async function merge(snapshotPath) {
   output({ merged: true, versions: releaseSummary(snapshot.releases), pr: snapshot.prNumber, commit: result.sha, cleanup });
 }
 
-module.exports = { admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, branchFor, cleanupAuditedBranch, compareVersions, hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload };
+module.exports = { admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, auditLocator, branchFor, cleanupAuditedBranch, compareVersions, hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload, withAuditLocator };
 if (require.main === module) {
   const [action, snapshotPath] = process.argv.slice(2);
   const task = action === 'probe' ? prepare('', true)

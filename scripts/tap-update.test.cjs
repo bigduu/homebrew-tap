@@ -7,8 +7,8 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const {
-  admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, branchFor, cleanupAuditedBranch, compareVersions,
-  hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload,
+  admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, auditLocator, branchFor, cleanupAuditedBranch, compareVersions,
+  hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload, withAuditLocator,
 } = require('./tap-update.cjs');
 
 const SOURCE = 'a'.repeat(40);
@@ -228,6 +228,17 @@ test('merge gate rejects changed head/base, draft, closed and foreign PRs', () =
   }
 });
 
+test('audit locator is discovery metadata and refresh preserves the rest of the PR body', () => {
+  const first = { runId: 123, runAttempt: 1 };
+  const next = { runId: 456, runAttempt: 2 };
+  assert.equal(auditLocator(first), '<!-- tap-audit:v1 run=123 attempt=1 -->');
+  assert.equal(withAuditLocator(withAuditLocator('Reviewed release details', first), next), `Reviewed release details\n\n${auditLocator(next)}\n`);
+  for (const value of [0, -1, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => auditLocator({ ...first, runId: value }));
+    assert.throws(() => auditLocator({ ...first, runAttempt: value }));
+  }
+});
+
 test('merge gate rejects requested changes, unresolved or truncated threads, and non-clean states', () => {
   const reviews = {
     mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN',
@@ -419,14 +430,14 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
       'const value=flag=>a[a.indexOf(flag)+1]; const field=name=>a.find(x=>x.startsWith(name+"="))?.slice(name.length+1);',
       'const state=fs.existsSync(process.env.TAP_TEST_PR)?JSON.parse(fs.readFileSync(process.env.TAP_TEST_PR)):null;',
       'const head=branch=>execFileSync("git",["--git-dir",process.env.TAP_TEST_REMOTE,"rev-parse","refs/heads/"+branch],{encoding:"utf8"}).trim();',
-      'const pr=branch=>({number:1,state:"open",draft:false,user:{login:"github-actions[bot]"},html_url:"https://github.com/bigduu/homebrew-tap/pull/1",head:{ref:branch,sha:head(branch),repo:{full_name:"bigduu/homebrew-tap"}},base:{ref:"main",sha:process.env.TAP_TEST_BASE,repo:{full_name:"bigduu/homebrew-tap"}}});',
+      'const pr=branch=>({number:1,state:"open",draft:false,body:state?.body,user:{login:"github-actions[bot]"},html_url:"https://github.com/bigduu/homebrew-tap/pull/1",head:{ref:branch,sha:head(branch),repo:{full_name:"bigduu/homebrew-tap"}},base:{ref:"main",sha:process.env.TAP_TEST_BASE,repo:{full_name:"bigduu/homebrew-tap"}}});',
       'let result; if(a[0]==="pr"){result=value("--state")==="open"&&state?[{number:1,url:state.html_url,headRefName:state.head.ref,headRefOid:head(state.head.ref),baseRefOid:process.env.TAP_TEST_BASE,isDraft:false}]:[];}',
       'else if(a[1]==="graphql"){result={data:{repository:{pullRequest:{reviewThreads:{nodes:[],pageInfo:{hasNextPage:false}},latestReviews:{nodes:[],pageInfo:{hasNextPage:false}}}}}};}',
       'else if(a[1].includes("/git/ref/tags/")){result={object:{type:"commit",sha:"a".repeat(40)}};}',
       'else if(a[1].endsWith("/releases/latest")){result=JSON.parse(process.env.TAP_TEST_RELEASES)[a[1].split("/")[2]];}',
       'else if(a[1].endsWith("/git/ref/heads/main")){result={object:{sha:process.env.TAP_TEST_BASE}};}',
-      'else if(a[1].endsWith("/pulls")&&value("--method")==="POST"){result=pr(field("head"));fs.writeFileSync(process.env.TAP_TEST_PR,JSON.stringify(result));}',
-      'else if(a[1].endsWith("/pulls/1")&&state){result=pr(state.head.ref);}',
+      'else if(a[1].endsWith("/pulls")&&value("--method")==="POST"){result={...pr(field("head")),body:field("body")};fs.writeFileSync(process.env.TAP_TEST_PR,JSON.stringify(result));}',
+      'else if(a[1].endsWith("/pulls/1")&&state){result=pr(state.head.ref);if(value("--method")==="PATCH"){result.body=field("body");fs.writeFileSync(process.env.TAP_TEST_PR,JSON.stringify(result));}}',
       'else{throw Error("Unexpected fake gh call: "+JSON.stringify(a));} console.log(JSON.stringify(result));',
     ].join('\n'));
     fs.chmodSync(fakeGh, 0o755);
@@ -435,6 +446,7 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     const env = {
       ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, NODE_OPTIONS: `--require=${preload}`,
       GITHUB_REPOSITORY: 'bigduu/homebrew-tap', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_OUTPUT: '',
+      GITHUB_SHA: git('rev-parse', 'main'), GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1',
       TAP_TEST_REMOTE: remote, TAP_TEST_BASE: git('rev-parse', 'main'), TAP_TEST_PR: prFile, TAP_TEST_LOG: logFile,
       TAP_TEST_RELEASES: JSON.stringify({ 'Bodhi-AI': bodhi, Jiandu: formulaFixture('jiandu'), Nova: nova }),
     };
@@ -444,6 +456,8 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     const initial = prepare();
     assert.equal(initial.changed, true);
     const first = JSON.parse(fs.readFileSync(snapshotPath));
+    assert.deepEqual(first.audit, { runId: 123, runAttempt: 1, controllerSha: env.GITHUB_SHA });
+    assert.ok(JSON.parse(fs.readFileSync(prFile)).body.includes(auditLocator(first.audit)));
     assert.equal(git('rev-parse', 'HEAD^'), env.TAP_TEST_BASE);
     git('checkout', '-q', 'main');
     assert.equal(prepare().candidate, first.headSha);
@@ -451,8 +465,11 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     fs.writeFileSync(path.join(worktree, 'README.md'), 'Another tap change');
     git('add', '.'); git('commit', '-qm', 'advance main'); git('push', '-q', 'origin', 'main');
     env.TAP_TEST_BASE = git('rev-parse', 'main');
+    env.GITHUB_SHA = env.TAP_TEST_BASE;
+    env.GITHUB_RUN_ID = '456';
     const refreshed = prepare();
     assert.notEqual(refreshed.candidate, first.headSha);
+    assert.ok(JSON.parse(fs.readFileSync(prFile)).body.includes(auditLocator({ runId: 456, runAttempt: 1 })));
     assert.equal(git('rev-parse', 'HEAD^'), env.TAP_TEST_BASE);
     assert.equal(git('ls-remote', '--heads', 'origin', first.branch).split('\t')[0], refreshed.candidate);
     assert.equal(fs.readFileSync(logFile, 'utf8').trim().split('\n').map(JSON.parse).filter(a => a[0] === 'api' && a[1].endsWith('/pulls') && a.includes('POST')).length, 1);
@@ -463,6 +480,7 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     fs.writeFileSync(path.join(worktree, 'README.md'), 'Main advanced again');
     git('add', '.'); git('commit', '-qm', 'advance main again'); git('push', '-q', 'origin', 'main');
     env.TAP_TEST_BASE = git('rev-parse', 'main');
+    env.GITHUB_SHA = env.TAP_TEST_BASE;
     assert.throws(prepare, /Human-edited/);
     assert.equal(git('ls-remote', '--heads', 'origin', first.branch).split('\t')[0], humanHead);
   } finally {
