@@ -346,11 +346,23 @@ function verifyCandidate(snapshot) {
   assert.equal(git('status', '--porcelain'), '', 'Candidate checkout is dirty');
 }
 
-async function prepare(snapshotPath, probe = false) {
+async function updatePlan() {
   const baseFiles = Object.fromEntries(PATHS.map(file => [file, fs.readFileSync(file, 'utf8')]));
   const releases = await latestReleases();
   const candidates = renderFiles(baseFiles, releases);
-  if (PATHS.every(file => candidates[file] === baseFiles[file])) {
+  return { baseFiles, releases, candidates, changed: PATHS.some(file => candidates[file] !== baseFiles[file]) };
+}
+
+async function scan() {
+  // Routing only. No snapshot, candidate, write or large-asset verification.
+  // prepare independently rereads the plan and verifies the actual downloads.
+  const { changed } = await updatePlan();
+  output({ changed });
+}
+
+async function prepare(snapshotPath, probe = false) {
+  const { baseFiles, releases, candidates, changed } = await updatePlan();
+  if (!changed) {
     output({ changed: false, versions: releaseSummary(releases), reason: 'All packages match the latest stable releases, asset digests and Jiandu source archive hash' });
     return;
   }
@@ -538,10 +550,11 @@ async function merge(snapshotPath) {
 module.exports = { admitFormulaRelease, admitRelease, assertOpenUpdates, assertPullRequest, assertRefreshable, assertReviews, auditLocator, branchFor, cleanupAuditedBranch, compareVersions, hash, readCask, readFormula, renderCask, renderFiles, renderPackage, verifyCandidate, verifyDownload, withAuditLocator };
 if (require.main === module) {
   const [action, snapshotPath] = process.argv.slice(2);
-  const task = action === 'probe' ? prepare('', true)
+  const task = action === 'scan' && !snapshotPath ? scan()
+    : action === 'probe' ? prepare('', true)
     : action === 'prepare' && snapshotPath ? prepare(snapshotPath)
       : action === 'verify' && snapshotPath ? Promise.resolve().then(() => verifyCandidate(JSON.parse(fs.readFileSync(snapshotPath, 'utf8'))))
         : action === 'merge' && snapshotPath ? merge(snapshotPath)
-          : Promise.reject(new Error('Usage: tap-update.cjs probe | prepare/verify/merge <snapshot-path>'));
+          : Promise.reject(new Error('Usage: tap-update.cjs scan | probe | prepare/verify/merge <snapshot-path>'));
   task.catch(error => { console.error(error.message); process.exitCode = 1; });
 }

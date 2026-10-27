@@ -22,20 +22,38 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      changed: ${{ steps.prepare.outputs.changed }}
+      changed: ${{ steps.prepare.outputs.changed || steps.decision.outputs.changed }}
       candidate: ${{ steps.prepare.outputs.candidate }}
       snapshot_artifact: tap-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+      - name: Scan published release metadata
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/tap-update.cjs scan
+      - name: Require an explicit update decision
+        id: decision
+        env:
+          SCAN_CHANGED: ${{ steps.scan.outputs.changed }}
+        shell: bash
+        run: |
+          case "$SCAN_CHANGED" in
+            true) ;;
+            false) printf '%s\n' 'changed=false' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'Missing or unknown update decision' >&2; exit 1 ;;
+          esac
       - name: Run update contracts
+        if: steps.scan.outputs.changed == 'true'
         run: node --test scripts/*.test.cjs
       - name: Prepare one exact version PR
+        if: steps.scan.outputs.changed == 'true'
         id: prepare
         env:
           GH_TOKEN: ${{ github.token }}

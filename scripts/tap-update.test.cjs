@@ -487,3 +487,175 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function scanFixture(t, changed) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tap-scan-test-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const files = { ...baseFiles, 'Casks/bodhi.rb': armCask };
+  for (const key of ['jiandu', 'nova']) files['Formula/' + key + '.rb'] =
+    files['Formula/' + key + '.rb'].replace(/^  sha256 .+$/m, '  sha256 "' + hash('abc') + '"');
+  for (const [file, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
+    fs.writeFileSync(path.join(directory, file), text);
+  }
+  const bodhi = fixture(changed ? '2026.10.7' : readCask(armCask).version);
+  bodhi.assets = [bodhi.assets[0]];
+  bodhi.assets[0].digest = 'sha256:' + (changed ? hash('abc') : readCask(armCask).arm);
+  const nova = formulaFixture('nova'); nova.assets[0].digest = 'sha256:' + hash('abc');
+  const model = path.join(directory, 'model.json'), log = path.join(directory, 'calls.jsonl');
+  const value = { releases: { 'Bodhi-AI': bodhi, Jiandu: formulaFixture('jiandu'), Nova: nova } };
+  const save = () => fs.writeFileSync(model, JSON.stringify(value));
+  save();
+  const bin = path.join(directory, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/usr/bin/env node', 'const fs=require("node:fs"),a=process.argv.slice(2),m=JSON.parse(fs.readFileSync(process.env.TAP_TEST_MODEL));',
+    'fs.appendFileSync(process.env.TAP_TEST_LOG,JSON.stringify(["gh",a])+"\\n");',
+    'if(a[0]!=="api"||a[a.indexOf("--method")+1]!=="GET"||m.apiFailure)throw Error("Unexpected or failed API read");',
+    'const e=a[1]; const v=e.includes("/git/ref/tags/")?{object:{type:"commit",sha:"a".repeat(40)}}:m.releases[e.split("/")[2]];',
+    'if(!v)throw Error("Unexpected route");console.log(JSON.stringify(v));',
+  ].join('\n'));
+  fs.writeFileSync(path.join(bin, 'git'), '#!/usr/bin/env node\nrequire("node:fs").appendFileSync(process.env.TAP_TEST_LOG,JSON.stringify(["git",process.argv.slice(2)])+"\\n");throw Error("No git operation belongs to scan");\n');
+  for (const name of ['gh', 'git']) fs.chmodSync(path.join(bin, name), 0o755);
+  const preload = path.join(directory, 'fetch.cjs');
+  fs.writeFileSync(preload, [
+    'globalThis.fetch=async url=>{const fs=require("node:fs"),m=JSON.parse(fs.readFileSync(process.env.TAP_TEST_MODEL));',
+    'fs.appendFileSync(process.env.TAP_TEST_LOG,JSON.stringify(["download",String(url)])+"\\n");',
+    'if(!String(url).startsWith("https://github.com/bigduu/"))throw Error("Unexpected download");',
+    'return new Response(m.badLarge&&!String(url).includes("/Jiandu/")?"bad":"abc");};',
+  ].join('\n'));
+  const output = path.join(directory, 'outputs.txt'), snapshot = path.join(directory, 'snapshot.json');
+  const environment = Object.fromEntries(['PATH', 'HOME', 'SystemRoot', 'TMPDIR', 'LANG', 'LC_ALL']
+    .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+  const execute = action => require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'tap-update.cjs'), action, ...(action === 'prepare' ? [snapshot] : [])], {
+      cwd: directory, encoding: 'utf8', env: { ...environment, PATH: bin + path.delimiter + environment.PATH,
+        NODE_OPTIONS: '--require=' + preload, TAP_TEST_MODEL: model, TAP_TEST_LOG: log, GITHUB_OUTPUT: output },
+    });
+  const calls = () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+  const unchanged = () => {
+    for (const [file, text] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(directory, file), 'utf8'), text);
+    assert.equal(fs.existsSync(snapshot), false);
+    assert.equal(calls().filter(call => call[0] === 'git').length, 0);
+    assert.ok(calls().filter(call => call[0] === 'gh').every(call => call[1].at(-1) === 'GET'));
+  };
+  return { directory, value, save, execute, calls, unchanged, output, reset: () => fs.writeFileSync(log, '') };
+}
+
+for (const changed of [false, true]) test('read-only scan reports ' + changed + ' without writing or fetching installer bytes', t => {
+  const h = scanFixture(t, changed), result = h.execute('scan');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).changed, changed);
+  assert.match(fs.readFileSync(h.output, 'utf8'), new RegExp('^changed=' + changed + '$', 'm'));
+  h.unchanged();
+  assert.deepEqual(h.calls().filter(call => call[0] === 'download'),
+    [['download', 'https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.0.tar.gz']]);
+});
+
+for (const variant of ['api', 'prerelease', 'same-version-digest']) test('read-only scan rejects ' + variant + ' instead of reporting a no-op', t => {
+  const h = scanFixture(t, false);
+  if (variant === 'api') h.value.apiFailure = true;
+  if (variant === 'prerelease') h.value.releases['Bodhi-AI'].prerelease = true;
+  if (variant === 'same-version-digest') h.value.releases['Bodhi-AI'].assets[0].digest = 'sha256:' + 'f'.repeat(64);
+  h.save();
+  const result = h.execute('scan');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /failed API read|Prereleases cannot|digest changed/);
+  assert.equal(fs.existsSync(h.output), false);
+  h.unchanged();
+});
+
+test('read-only scan never substitutes for the existing full probe or prepare byte validation', t => {
+  const h = scanFixture(t, true);
+  h.value.badLarge = true; h.save();
+  assert.equal(h.execute('scan').status, 0, 'metadata scan does not fetch large bytes');
+  for (const action of ['probe', 'prepare']) {
+    h.reset(); const result = h.execute(action);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /digest mismatch/);
+    assert.ok(h.calls().some(call => call[0] === 'download' && call[1].endsWith('.dmg')));
+    h.unchanged();
+  }
+});
+
+test('read-only scan cannot authorize prepare after external release inputs change', t => {
+  const h = scanFixture(t, true);
+  assert.equal(h.execute('scan').status, 0);
+  const next = fixture('2026.10.8'); next.assets = [next.assets[0]];
+  next.assets[0].digest = 'sha256:' + hash('abc');
+  h.value.releases['Bodhi-AI'] = next; h.save(); h.reset();
+  const result = h.execute('prepare');
+  // Fresh full validation occurs before the unchanged main mutation guard,
+  // which deliberately has no GitHub execution identity in this inert fixture.
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /Updater may only mutate its own tap/);
+  const large = h.calls().filter(call => call[0] === 'download' && !call[1].includes('/Jiandu/')).map(call => call[1]);
+  assert.equal(large.length, 2, 'one fresh Bodhi and one Nova download, not a scan replay');
+  assert.ok(large.some(url => url.includes('app-v2026.10.8/')));
+  assert.ok(large.every(url => !url.includes('app-v2026.10.7/')));
+  h.unchanged();
+});
+
+function executeUpdaterRoute(t, changed, scanExit = 0, unitExit = 0, source = fs.readFileSync(path.join(__dirname, '../.github/workflows/update-tap.yml'), 'utf8')) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tap-route-test-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const log = path.join(directory, 'calls.jsonl'), node = path.join(directory, 'node');
+  fs.writeFileSync(node, [
+    '#!' + process.execPath, 'const fs=require("node:fs"),a=process.argv.slice(2);',
+    'const phase=a[0]==="--test"?"unit":a[1];fs.appendFileSync(process.env.TAP_ROUTE_LOG,JSON.stringify(phase)+"\\n");',
+    'if(phase==="scan"){if(+process.env.TAP_SCAN_EXIT)process.exit(+process.env.TAP_SCAN_EXIT);if(process.env.TAP_SCAN_VALUE!=="")fs.appendFileSync(process.env.GITHUB_OUTPUT,"changed="+process.env.TAP_SCAN_VALUE+"\\n");}',
+    'else if(phase==="unit")process.exit(+process.env.TAP_UNIT_EXIT);',
+    'else if(phase==="prepare")fs.appendFileSync(process.env.GITHUB_OUTPUT,"changed=true\\ncandidate=fixture\\n");else throw Error("Unexpected command");',
+  ].join('\n')); fs.chmodSync(node, 0o755);
+  const prepare = source.split('\n  prepare:\n')[1].split('\n  audit:\n')[0], outputs = {}, phases = [];
+  let success = true;
+  for (const block of prepare.split('\n      - ').slice(1).filter(block => block.startsWith('name:'))) {
+    const condition = block.match(/^        if: (.+)$/m)?.[1];
+    if (condition) {
+      assert.equal(condition, "steps.scan.outputs.changed == 'true'", 'unknown workflow condition');
+      if (outputs.scan?.changed !== 'true') continue;
+    }
+    const id = block.match(/^        id: ([a-z]+)$/m)?.[1] || 'unit';
+    const run = block.match(/^        run: (.+)$/m)?.[1];
+    assert.ok(run, 'a named step must execute');
+    const command = run === '|' ? block.split('        run: |\n')[1].split('\n').map(line => line.slice(10)).join('\n') : run;
+    const output = path.join(directory, id + '.out');
+    const decisionInput = block.match(/^          SCAN_CHANGED: \$\{\{ steps\.([a-z]+)\.outputs\.changed \}\}$/m);
+    const env = { PATH: directory + path.delimiter + process.env.PATH, RUNNER_TEMP: directory, GITHUB_OUTPUT: output,
+      TAP_ROUTE_LOG: log, TAP_SCAN_VALUE: changed, TAP_SCAN_EXIT: String(scanExit), TAP_UNIT_EXIT: String(unitExit) };
+    if (decisionInput) env.SCAN_CHANGED = outputs[decisionInput[1]]?.changed || '';
+    const result = require('node:child_process').spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', command], {
+      cwd: directory, encoding: 'utf8', env,
+    });
+    outputs[id] = Object.fromEntries((fs.existsSync(output) ? fs.readFileSync(output, 'utf8') : '')
+      .split('\n').filter(Boolean).map(line => line.split('=')));
+    if (result.status !== 0) { success = false; break; }
+  }
+  const expression = prepare.match(/^      changed: \$\{\{ (.+) \}\}$/m)?.[1];
+  const ids = expression?.match(/^steps\.([a-z]+)\.outputs\.changed \|\| steps\.([a-z]+)\.outputs\.changed$/);
+  assert.ok(ids, 'job output must retain the actual preparation or explicit no-op decision');
+  const decision = outputs[ids[1]]?.changed || outputs[ids[2]]?.changed;
+  for (const job of ['audit', 'merge']) {
+    const block = source.split('\n  ' + job + ':\n')[1].split(/\n  [a-z]+:\n/)[0];
+    assert.match(block, /    if: needs\.prepare\.outputs\.changed == 'true'\n/);
+    if (success && decision === 'true') phases.push(job);
+  }
+  return { success, decision, calls: (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : []).concat(phases) };
+}
+
+test('updater routing runs Unit and writes once only for an explicit changed candidate', t => {
+  assert.deepEqual(executeUpdaterRoute(t, 'false'), { success: true, decision: 'false', calls: ['scan'] });
+  assert.deepEqual(executeUpdaterRoute(t, 'true'), { success: true, decision: 'true', calls: ['scan', 'unit', 'prepare', 'audit', 'merge'] });
+  const source = fs.readFileSync(path.join(__dirname, '../.github/workflows/update-tap.yml'), 'utf8');
+  assert.match(source, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  const mutated = source.replace("        if: steps.scan.outputs.changed == 'true'\n", '');
+  assert.ok(executeUpdaterRoute(t, 'false', 0, 0, mutated).calls.includes('unit'), 'removing a guard must expose the duplicate');
+  const missingInput = source.replace(/^          SCAN_CHANGED: .+\n/m, '');
+  assert.equal(executeUpdaterRoute(t, 'false', 0, 0, missingInput).success, false, 'the actual decision environment must be wired');
+});
+
+for (const variant of ['missing', 'unknown', 'scan-failure', 'unit-failure']) test('updater routing fails before writing on ' + variant, t => {
+  const result = executeUpdaterRoute(t, variant === 'missing' ? '' : variant === 'unknown' ? 'yes' : 'true',
+    variant === 'scan-failure' ? 9 : 0, variant === 'unit-failure' ? 8 : 0);
+  assert.equal(result.success, false);
+  assert.equal(result.decision, undefined, 'failed or missing decisions cannot become a false no-op');
+  assert.deepEqual(result.calls, variant === 'unit-failure' ? ['scan', 'unit'] : ['scan']);
+});

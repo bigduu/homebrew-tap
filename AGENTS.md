@@ -1,7 +1,10 @@
 # Homebrew tap delivery contract
 
-Use the shared [delivery-flow/v1](https://github.com/bigduu/Zenith/blob/main/docs/delivery-workflow.md)
-and [README maintenance guide](README.md#automatic-tap-updates). Give every
+Use the complete local [delivery-flow/v1](docs/delivery-workflow.md),
+[Actions audit](docs/ci-workflow-audit.md) and
+[README maintenance guide](README.md#automatic-tap-updates). The shared documents
+retain their identified audit snapshots; check this local guide and live evidence
+for current activation. Give every
 bounded Issue one owner, isolated worktree and branch. Preserve other agents'
 checkouts, queued runs, review findings and exact source/asset evidence.
 
@@ -24,8 +27,8 @@ hashes. It must not repeat the same candidate test or compilation after merge.
   supported formula checks on both architectures. These are installation tests,
   not another upstream product test suite.
 
-After #24 lands, automatic PR checks authenticate the original updater's Unit
-and per-architecture native results with `scripts/tap-audit-proof.cjs`, checked
+The implementation from #24/PR25 makes automatic PR checks authenticate the
+original updater's Unit and per-architecture native results with `scripts/tap-audit-proof.cjs`, checked
 out from the exact trusted PR base. The PR body run/attempt marker is only a
 locator. Admission verifies the updater workflow ID/path, canonical repository,
 main controller/event/base, immutable snapshot, exact live PR head/base/tree and
@@ -47,8 +50,28 @@ the old base has no verifier. That bootstrap route admits no automatic reuse.
 Main push performs no audit. A scheduled/manual updater using the trusted main
 workflow is still the candidate validation phase. Do not trust a branch prefix,
 bypass required checks, change protection, or add write credentials to deduplicate
-checks. This branch does not claim production activation before its reviewed
-workflow/helper changes land on main; independent CI/review evidence is required.
+checks. PR26 first exercised the original updater: run40430189865 passed its
+prepare, ARM, Intel and merge jobs. Additional PR run40430245940 expired awaiting
+approval with zero jobs; preserve that failure, not a claim that PR proof ran.
+Do not repeat installation to rewrite it as successful. A later real candidate
+must establish its own exact original and PR-proof evidence.
+
+## Unchanged scheduled updates
+
+The updater checks out its actual workflow SHA and first runs
+`node scripts/tap-update.cjs scan`. This is only a read-only routing decision from current metadata and the
+necessary Jiandu source archive hash; it grants no preparation or merge authority.
+An explicit false skips Unit, PR preparation, snapshot upload, native checks and
+merge. Missing/unknown output or a failed scan fails the job; never treat it as
+false. A no-op has no reusable Unit/native proof.
+
+An explicit true runs `Run update contracts` once before `Prepare one exact
+version PR`. Prepare independently rereads releases and retains its complete
+asset-download verification and final fresh guards. No scan result or saved
+metadata replaces that verification. The manual `probe` command keeps its
+existing download-verification behavior. All snapshot and proof contracts stay
+unchanged. Subsequent no-op schedules40463241962/40506017802 historically still
+ran Unit; the new route removes that repetition, not their original outcomes.
 
 ## Exact published inputs
 
@@ -73,7 +96,9 @@ node --test scripts/*.test.cjs
 actionlint .github/workflows/check.yml .github/workflows/check-tap.yml .github/workflows/update-tap.yml
 ```
 
-`node scripts/tap-update.cjs probe` is read-only and uses the current gh account.
+`node scripts/tap-update.cjs scan` reads the update decision without downloading
+large installer assets. `node scripts/tap-update.cjs probe` retains its full
+read-only verification path. Both use the current gh account.
 Native installation tests run only in disposable CI runners, not on the user's
 Mac. Use failed-job reruns with the same accepted candidate and original retained
 outputs; a moved source or input requires fresh affected evidence.
