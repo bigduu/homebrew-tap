@@ -1,11 +1,23 @@
 # bigduu Homebrew tap
 
 维护和 agent 协作遵循 [AGENTS.md](AGENTS.md) 与
-[统一交付流程](https://github.com/bigduu/Zenith/blob/main/docs/delivery-workflow.md)。
+[本仓库完整统一交付流程](docs/delivery-workflow.md) 和
+[Actions 审查](docs/ci-workflow-audit.md)。
 测试由候选 PR 完成，main 保存接受的版本、URL 和哈希，不在合并后重跑同一套验收。
 自动更新器保留对精确候选的可靠原生验收。
-[#24](https://github.com/bigduu/homebrew-tap/issues/24) 合并后，自动 PR 的额外触发会认证原始
-审计，复用已成功的 Unit 和双架构安装结果；普通 PR 仍实际运行这些检查。
+[#24/PR25](https://github.com/bigduu/homebrew-tap/pull/25) 已合入原始审计认证：自动 PR 的
+额外触发复用已成功的 Unit 和双架构安装结果；普通 PR 仍实际运行这些检查。
+
+更新器先只读扫描元数据和必要的 Jiandu 源码摘要。明确无变化时，跳过 Unit、创建 PR、
+快照上传及原生检查；缺失、未知结果或扫描失败会使 job 失败，不能默认为无变化。
+存在候选时先运行一次 Unit，再由 prepare 独立重读并完整校验当前下载后创建 PR。
+扫描只决定路由，不授予发布或合并资格；现有手动完整 `probe` 和原件证明契约保持不变。
+
+[PR26](https://github.com/bigduu/homebrew-tap/pull/26) 的原始更新器
+[run40430189865](https://github.com/bigduu/homebrew-tap/actions/runs/40430189865) 四个
+prepare/双架构/merge job 已通过；[附加 PR 工作流](https://github.com/bigduu/homebrew-tap/actions/runs/40430245940)
+因等待批准过期，实际为零 jobs。保留该失败，不能称为 PR 证明已通过，也不能当作产品失败。
+之后两次绿色定时运行只是旧定义下仍执行 Unit 的无变化运行，不代表新扫描或未来候选已验收。
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 

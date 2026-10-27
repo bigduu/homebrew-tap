@@ -34,13 +34,29 @@ Maintainers: update the cask and formula versions only after their upstream rele
 ## Automatic tap updates
 
 Agents and maintainers follow [AGENTS.md](AGENTS.md) and the
-[shared delivery workflow](https://github.com/bigduu/Zenith/blob/main/docs/delivery-workflow.md).
+[complete local delivery workflow](docs/delivery-workflow.md) and
+[Actions audit](docs/ci-workflow-audit.md).
 PRs own their contract and native installation checks; main stores the accepted
 definitions without another postmerge audit. The updater owns its prepared
-candidate's native audit. After [#24](https://github.com/bigduu/homebrew-tap/issues/24)
-lands, an automatic PR's additional trigger verifies that original audit instead
-of repeating Unit or installation checks. Ordinary PRs still run their real
-contract and two-architecture installation tests.
+candidate's native audit. [#24/PR25](https://github.com/bigduu/homebrew-tap/pull/25)
+installed original-audit verification for automatic PRs, avoiding a repeated
+Unit or installation run. Ordinary PRs still run their real contract and
+two-architecture installation tests.
+
+The updater first scans metadata and the necessary Jiandu source archive hash.
+An explicit no-change result skips Unit, PR creation, snapshot upload and native
+checks; a missing/unknown result or scan failure fails the job. A real candidate
+runs Unit once, then independently prepares and fully verifies current downloads
+before creating its PR. This scan is only routing; the manual full `probe` and
+all original-output/proof checks retain their existing meaning.
+
+[PR26](https://github.com/bigduu/homebrew-tap/pull/26) passed the original updater's
+four prepare/native/merge jobs in [run40430189865](https://github.com/bigduu/homebrew-tap/actions/runs/40430189865).
+Its [additional PR workflow](https://github.com/bigduu/homebrew-tap/actions/runs/40430245940)
+expired awaiting approval with zero jobs. That failure is retained; it is not a
+passed PR proof or a product failure. Two later successful schedules were no-ops
+that still ran Unit under the earlier definition. These facts do not certify the
+new scan's hosted execution or a future candidate's proof.
 
 The `Update tap releases` workflow checks the latest published stable releases of Bodhi, Jiandu, and Nova every six hours. It also supports a manual run from `main`. When all three match, it performs a read-only no-op. The updater refuses downgrades and changed digests at the same version. Every Bodhi DMG selected by the reviewed cask and Nova's universal CLI archive must match their published asset digests. Jiandu is built from its released source tag, so the updater downloads its source archive to verify the SHA-256 even for a no-op.
 
