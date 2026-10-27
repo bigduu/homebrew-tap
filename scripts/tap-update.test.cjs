@@ -487,3 +487,66 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function scanFixture(t, changed) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tap-scan-test-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const files = { ...baseFiles, 'Casks/bodhi.rb': armCask };
+  for (const key of ['jiandu', 'nova']) files['Formula/' + key + '.rb'] =
+    files['Formula/' + key + '.rb'].replace(/^  sha256 .+$/m, '  sha256 "' + hash('abc') + '"');
+  for (const [file, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
+    fs.writeFileSync(path.join(directory, file), text);
+  }
+  const bodhi = fixture(changed ? '2026.10.7' : readCask(armCask).version);
+  bodhi.assets = [bodhi.assets[0]];
+  bodhi.assets[0].digest = 'sha256:' + (changed ? hash('abc') : readCask(armCask).arm);
+  const nova = formulaFixture('nova'); nova.assets[0].digest = 'sha256:' + hash('abc');
+  const model = path.join(directory, 'model.json'), log = path.join(directory, 'calls.jsonl');
+  const value = { releases: { 'Bodhi-AI': bodhi, Jiandu: formulaFixture('jiandu'), Nova: nova } };
+  const save = () => fs.writeFileSync(model, JSON.stringify(value));
+  save();
+  const bin = path.join(directory, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), [
+    '#!/usr/bin/env node', 'const fs=require("node:fs"),a=process.argv.slice(2),m=JSON.parse(fs.readFileSync(process.env.TAP_TEST_MODEL));',
+    'fs.appendFileSync(process.env.TAP_TEST_LOG,JSON.stringify(["gh",a])+"\\n");',
+    'if(a[0]!=="api"||a[a.indexOf("--method")+1]!=="GET"||m.apiFailure)throw Error("Unexpected or failed API read");',
+    'const e=a[1]; const v=e.includes("/git/ref/tags/")?{object:{type:"commit",sha:"a".repeat(40)}}:m.releases[e.split("/")[2]];',
+    'if(!v)throw Error("Unexpected route");console.log(JSON.stringify(v));',
+  ].join('\n'));
+  fs.writeFileSync(path.join(bin, 'git'), '#!/usr/bin/env node\nrequire("node:fs").appendFileSync(process.env.TAP_TEST_LOG,JSON.stringify(["git",process.argv.slice(2)])+"\\n");throw Error("No git operation belongs to scan");\n');
+  for (const name of ['gh', 'git']) fs.chmodSync(path.join(bin, name), 0o755);
+  const preload = path.join(directory, 'fetch.cjs');
+  fs.writeFileSync(preload, [
+    'globalThis.fetch=async url=>{const fs=require("node:fs"),m=JSON.parse(fs.readFileSync(process.env.TAP_TEST_MODEL));',
+    'fs.appendFileSync(process.env.TAP_TEST_LOG,JSON.stringify(["download",String(url)])+"\\n");',
+    'if(!String(url).startsWith("https://github.com/bigduu/"))throw Error("Unexpected download");',
+    'return new Response(m.badLarge&&!String(url).includes("/Jiandu/")?"bad":"abc");};',
+  ].join('\n'));
+  const output = path.join(directory, 'outputs.txt'), snapshot = path.join(directory, 'snapshot.json');
+  const environment = Object.fromEntries(['PATH', 'HOME', 'SystemRoot', 'TMPDIR', 'LANG', 'LC_ALL']
+    .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+  const execute = action => require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'tap-update.cjs'), action, ...(action === 'prepare' ? [snapshot] : [])], {
+      cwd: directory, encoding: 'utf8', env: { ...environment, PATH: bin + path.delimiter + environment.PATH,
+        NODE_OPTIONS: '--require=' + preload, TAP_TEST_MODEL: model, TAP_TEST_LOG: log, GITHUB_OUTPUT: output },
+    });
+  const calls = () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+  const unchanged = () => {
+    for (const [file, text] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(directory, file), 'utf8'), text);
+    assert.equal(fs.existsSync(snapshot), false);
+    assert.equal(calls().filter(call => call[0] === 'git').length, 0);
+    assert.ok(calls().filter(call => call[0] === 'gh').every(call => call[1].at(-1) === 'GET'));
+  };
+  return { directory, value, save, execute, calls, unchanged, output, reset: () => fs.writeFileSync(log, '') };
+}
+
+for (const changed of [false, true]) test('read-only scan reports ' + changed + ' without writing or fetching installer bytes', t => {
+  const h = scanFixture(t, changed), result = h.execute('scan');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).changed, changed);
+  assert.match(fs.readFileSync(h.output, 'utf8'), new RegExp('^changed=' + changed + '$', 'm'));
+  h.unchanged();
+  assert.deepEqual(h.calls().filter(call => call[0] === 'download'),
+    [['download', 'https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.0.tar.gz']]);
+});
