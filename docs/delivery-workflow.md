@@ -123,11 +123,16 @@ Keep these identities separate:
 4. The trusted workflow controller and original build run/job/attempt.
 5. The later main promotion commit.
 
-Admission must prove the feature result belongs to the accepted inputs and
-that the frozen source preserves the tested product tree. Preserve the actual
-tested snapshot even when GitHub's eventual merge SHA differs. Equal trees do
-not make the two runtime identities interchangeable. Never relabel a release
-binary as built on a later main merge.
+Feature admission requires passing Unit/E2E for the actual tested inputs before
+the normal protected dev merge. Preserve the real test snapshot and run when
+available; equal trees do not make different runtime identities interchangeable.
+Never relabel a release binary as built on a later main merge.
+
+Lotus publication trusts the normal protected dev merge and verifies its PR,
+parents, source tree, dev ancestry and current feature gate. It does not require
+expired feature job or artifact records, and it cannot independently prove the
+details of those deleted results. Bamboo and Bodhi retain their own original
+feature-run admission requirements; follow their local release guides.
 
 Use the existing trusted default-branch controller to dispatch a selected frozen
 release source. Feature code gets no publication credential. Controller and
@@ -135,9 +140,9 @@ product checkouts remain separate. The phase is selected by the event and its
 validated inputs, not by the controller ref: a release `workflow_dispatch` may
 execute reviewed controls from main while building the frozen release source.
 This is the sole release producer, not a second main-push/promotion producer.
-A new release-source admission contract must
-reject incomplete, skipped, failed, stale or foreign feature evidence. Historical
-compile-only or runtime-skipped receipts cannot authorize a new-contract release.
+Before a feature merges, reject incomplete, skipped, failed, stale or foreign
+feature results. Historical compile-only or runtime-skipped receipts cannot
+authorize a new-contract release.
 Retain old receipt parsers only for their explicitly frozen recovery routes.
 
 Use the one existing version allocator or explicit reviewed unused version.
