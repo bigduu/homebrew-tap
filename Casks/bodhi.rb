@@ -1,6 +1,6 @@
 cask "bodhi" do
-  version "2026.11.23"
-  sha256 "c8438b27e1a7cb193ff3814a939e8144708e718aa3c5ec541d673ca271418751"
+  version "2026.11.24"
+  sha256 "c514c1bbfd903cff811c695139245e00ab48cf8c7b9720b9d9c18db6552cd0ea"
 
   url "https://github.com/bigduu/Bodhi-AI/releases/download/app-v#{version}/Bodhi.AI_#{version}_aarch64.dmg"
   name "Bodhi AI"
