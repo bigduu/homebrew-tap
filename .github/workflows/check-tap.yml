@@ -135,6 +135,7 @@ jobs:
           if [ "$RUNNER_ARCH" = X64 ]; then
             brew install --formula bigduu/tap/jiandu bigduu/tap/nova
           else
+            # The ARM cask installation below installs both dependencies.
             for formula in jiandu nova; do
               if brew list --formula --versions "bigduu/tap/$formula"; then
                 echo "$formula must be absent before testing Bodhi's cask dependency installation." >&2

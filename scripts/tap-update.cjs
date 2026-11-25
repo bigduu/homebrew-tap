@@ -19,8 +19,7 @@ const PATHS = Object.values(PRODUCTS).map(product => product.path).sort();
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const VERSION = /^(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})$/;
-const LINUX_BLOCK = /^  on_linux do\n([\s\S]*?)^  end$/gm;
-const MACOS_REVISION_BLOCK = /\n  on_macos do\n    revision [1-9]\d*\n  end\n/;
+const JIANDU_ARCHIVE_BLOCK = /^  if Homebrew::SimulateSystem\.simulating_or_running_on_macos\?\n    url "([^"\n]+)"\n    sha256 "([a-f0-9]{64})"\n(?:    revision [1-9]\d*\n)?  else\n    url "([^"\n]+)"\n    sha256 "([a-f0-9]{64})"\n  end$/gm;
 
 function hash(text) {
   return createHash('sha256').update(text).digest('hex');
@@ -222,11 +221,16 @@ async function latestReleases() {
 }
 
 function readFormula(key, text) {
+  const platformArchives = key === 'jiandu' ? [...text.matchAll(JIANDU_ARCHIVE_BLOCK)] : [];
+  assert.ok(platformArchives.length <= 1, 'Expected at most one Jiandu platform archive block');
+  const platformArchive = platformArchives[0];
   const urls = [...text.matchAll(/^  url "([^"]+)"$/gm)];
   const hashes = [...text.matchAll(/^  sha256 "([a-f0-9]{64})"$/gm)];
-  assert.equal(urls.length, 1, 'Expected exactly one formula archive URL');
-  assert.equal(hashes.length, 1, 'Expected exactly one formula archive hash');
-  const url = urls[0][1];
+  const topLevelArchiveCount = platformArchive ? 0 : 1;
+  assert.equal(urls.length, topLevelArchiveCount, 'Unexpected top-level formula archive URL');
+  assert.equal(hashes.length, topLevelArchiveCount, 'Unexpected top-level formula archive hash');
+  const url = platformArchive ? platformArchive[1] : urls[0][1];
+  const sha256 = platformArchive ? platformArchive[2] : hashes[0][1];
   // Source formula URLs remain readable for historical candidate snapshots.
   const source = key === 'jiandu' && url.match(/^https:\/\/github\.com\/bigduu\/Jiandu\/archive\/refs\/tags\/v([^/]+)\.tar\.gz$/);
   const match = source || url.match(/\/releases\/download\/v([^/]+)\//);
@@ -234,17 +238,14 @@ function readFormula(key, text) {
   const version = match[1];
   assert.match(version, VERSION);
   if (!source) assert.equal(url, formulaArchive(key, version).url, 'Unexpected formula archive URL');
-  const formula = { version, url, sha256: hashes[0][1] };
+  const formula = { version, url, sha256 };
   if (key === 'jiandu' && !source) {
-    const blocks = [...text.matchAll(LINUX_BLOCK)];
-    assert.equal(blocks.length, 1, 'Expected one Jiandu Linux source block');
-    const linuxUrls = [...blocks[0][1].matchAll(/^    url "([^"]+)"$/gm)];
-    const linuxHashes = [...blocks[0][1].matchAll(/^    sha256 "([a-f0-9]{64})"$/gm)];
-    assert.equal(linuxUrls.length, 1, 'Expected one Jiandu Linux source URL');
-    assert.equal(linuxHashes.length, 1, 'Expected one Jiandu Linux source hash');
-    assert.equal(linuxUrls[0][1], jianduSourceArchive(version), 'Jiandu macOS and Linux archive versions disagree');
-    formula.linuxSource = { url: linuxUrls[0][1], sha256: linuxHashes[0][1] };
+    assert.ok(platformArchive, 'Expected one Jiandu platform archive block');
+    const [, , , linuxUrl, linuxHash] = platformArchive;
+    assert.equal(linuxUrl, jianduSourceArchive(version), 'Jiandu macOS and Linux archive versions disagree');
+    formula.linuxSource = { url: linuxUrl, sha256: linuxHash };
   }
+  assert.ok(!source || !platformArchive, 'Jiandu macOS must use a binary archive');
   return formula;
 }
 
@@ -270,12 +271,19 @@ function renderPackage(key, text, release) {
     if (current.linuxSource) assert.equal(current.linuxSource.sha256, linuxSource.sha256, 'Published Jiandu Linux source digest changed at the current version');
     return text;
   }
-  const updated = text.replace(/^  url "[^"]+"$/m, `  url "${asset.url}"`)
+  if (current.linuxSource) {
+    return text.replace(JIANDU_ARCHIVE_BLOCK, [
+      '  if Homebrew::SimulateSystem.simulating_or_running_on_macos?',
+      `    url "${asset.url}"`,
+      `    sha256 "${asset.sha256}"`,
+      '  else',
+      `    url "${linuxSource.url}"`,
+      `    sha256 "${linuxSource.sha256}"`,
+      '  end',
+    ].join('\n'));
+  }
+  return text.replace(/^  url "[^"]+"$/m, `  url "${asset.url}"`)
     .replace(/^  sha256 "[a-f0-9]{64}"$/m, `  sha256 "${asset.sha256}"`);
-  if (!current.linuxSource) return updated;
-  return updated.replace(MACOS_REVISION_BLOCK, '').replace(LINUX_BLOCK, block => block
-    .replace(/^    url "[^"]+"$/m, `    url "${linuxSource.url}"`)
-    .replace(/^    sha256 "[a-f0-9]{64}"$/m, `    sha256 "${linuxSource.sha256}"`));
 }
 
 function renderFiles(baseFiles, releases) {

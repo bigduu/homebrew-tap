@@ -22,11 +22,14 @@ const armCask = fs.readFileSync(path.join(__dirname, '../Casks/bodhi.rb'), 'utf8
 const baseFiles = {
   'Casks/bodhi.rb': currentCask,
   'Formula/jiandu.rb': fs.readFileSync(path.join(__dirname, '../Formula/jiandu.rb'), 'utf8')
-    .replace(/^  url .+$/m, '  url "https://github.com/bigduu/Jiandu/releases/download/v0.3.0/jiandu-v0.3.0-universal-apple-darwin.tar.gz"')
-    .replace(/^    url .+$/m, '    url "https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.0.tar.gz"'),
+    .replace(/v\d+\.\d+\.\d+/g, 'v0.3.0'),
   'Formula/nova.rb': fs.readFileSync(path.join(__dirname, '../Formula/nova.rb'), 'utf8')
     .replace(/^  url .+$/m, '  url "https://github.com/bigduu/Nova/releases/download/v0.3.0/nova-v0.3.0-universal-apple-darwin.tar.gz"'),
 };
+
+function replaceJianduLinuxHash(text, sha256) {
+  return text.replace(/(^  else\n    url .+\n)    sha256 .+$/m, `$1    sha256 "${sha256}"`);
+}
 
 function formulaFixture(key, version = '0.3.0', sha256 = readFormula(key, baseFiles[`Formula/${key}.rb`]).sha256) {
   const repository = key === 'jiandu' ? 'bigduu/Jiandu' : 'bigduu/Nova';
@@ -178,11 +181,11 @@ test('formula releases use resolved tags even when target_commitish names a movi
 });
 
 test('formula updates change only archive identities and reset the Jiandu revision for a newer release', () => {
-  const macosRevision = '\n  on_macos do\n    revision 1\n  end\n';
+  const macosRevision = /^    revision [1-9]\d*\n/m;
   for (const key of ['jiandu', 'nova']) {
     const formula = baseFiles[`Formula/${key}.rb`];
-    const text = key === 'jiandu' && !formula.includes(macosRevision)
-      ? formula.replace(/^  license [^\n]+\n/m, `$&${macosRevision}`)
+    const text = key === 'jiandu' && !macosRevision.test(formula)
+      ? formula.replace(/^    sha256 [^\n]+\n/m, '$&    revision 1\n')
       : formula;
     const nextRelease = admitFormulaRelease(formulaFixture(key, '0.4.0', ARM), key, SOURCE);
     if (key === 'jiandu') nextRelease.assets.linuxSource.sha256 = INTEL;
@@ -192,7 +195,7 @@ test('formula updates change only archive identities and reset the Jiandu revisi
     assert.equal(updated.sha256, ARM);
     if (key === 'jiandu') {
       assert.equal(updated.linuxSource.sha256, INTEL);
-      assert.doesNotMatch(next, /^  on_macos do$/m);
+      assert.doesNotMatch(next, macosRevision);
     }
     const redact = value => value.replace(macosRevision, '').replace(/^ {2,4}(url|sha256) .+\n/gm, '');
     assert.equal(redact(text), redact(next));
@@ -403,7 +406,7 @@ test(`matching three releases prepare (${contract}) is read-only and verifies Ji
     fs.mkdirSync(path.join(directory, 'Casks'));
     fs.mkdirSync(path.join(directory, 'Formula'));
     const files = { ...baseFiles, 'Casks/bodhi.rb': cask,
-      'Formula/jiandu.rb': baseFiles['Formula/jiandu.rb'].replace(/^    sha256 .+$/m, `    sha256 "${hash('abc')}"`) };
+      'Formula/jiandu.rb': replaceJianduLinuxHash(baseFiles['Formula/jiandu.rb'], hash('abc')) };
     for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(directory, file), text);
     const current = readCask(cask);
     const raw = fixture(current.version);
@@ -453,8 +456,9 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     git('init', '-q', '-b', 'main');
     git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid');
     const files = { ...baseFiles };
-    for (const key of ['jiandu', 'nova']) files[`Formula/${key}.rb`] = files[`Formula/${key}.rb`].replace(/^  sha256 .+$/m, `  sha256 "${hash('abc')}"`);
-    files['Formula/jiandu.rb'] = files['Formula/jiandu.rb'].replace(/^    sha256 .+$/m, `    sha256 "${hash('abc')}"`);
+    files['Formula/nova.rb'] = files['Formula/nova.rb'].replace(/^  sha256 .+$/m, `  sha256 "${hash('abc')}"`);
+    files['Formula/jiandu.rb'] = replaceJianduLinuxHash(files['Formula/jiandu.rb'], hash('abc'))
+      .replace(/^    sha256 .+$/m, `    sha256 "${hash('abc')}"`);
     for (const [file, text] of Object.entries(files)) {
       fs.mkdirSync(path.dirname(path.join(worktree, file)), { recursive: true });
       fs.writeFileSync(path.join(worktree, file), text);
@@ -533,9 +537,9 @@ function scanFixture(t, changed) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tap-scan-test-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const files = { ...baseFiles, 'Casks/bodhi.rb': armCask };
-  for (const key of ['jiandu', 'nova']) files['Formula/' + key + '.rb'] =
-    files['Formula/' + key + '.rb'].replace(/^  sha256 .+$/m, '  sha256 "' + hash('abc') + '"');
-  files['Formula/jiandu.rb'] = files['Formula/jiandu.rb'].replace(/^    sha256 .+$/m, '    sha256 "' + hash('abc') + '"');
+  files['Formula/nova.rb'] = files['Formula/nova.rb'].replace(/^  sha256 .+$/m, `  sha256 "${hash('abc')}"`);
+  files['Formula/jiandu.rb'] = replaceJianduLinuxHash(files['Formula/jiandu.rb'], hash('abc'))
+    .replace(/^    sha256 .+$/m, `    sha256 "${hash('abc')}"`);
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
     fs.writeFileSync(path.join(directory, file), text);
