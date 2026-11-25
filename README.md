@@ -2,7 +2,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-This tap installs [Bodhi AI](https://github.com/bigduu/Bodhi-AI) together with the [Jiandu](https://github.com/bigduu/Jiandu), [Nova](https://github.com/bigduu/Nova), and [Magpie](https://github.com/bigduu/Magpie) command-line tools.
+This tap provides [Bodhi AI](https://github.com/bigduu/Bodhi-AI) and the [Jiandu](https://github.com/bigduu/Jiandu), [Nova](https://github.com/bigduu/Nova), and [Magpie](https://github.com/bigduu/Magpie) command-line tools.
 
 ```sh
 brew tap bigduu/tap
@@ -12,14 +12,16 @@ brew install --cask bigduu/tap/bodhi
 
 Homebrew requires explicit trust to load formula dependencies from a third-party tap. `brew trust bigduu/tap` trusts this tap, including future packages from it.
 
-The Bodhi cask currently supports Apple Silicon (arm64). Bodhi 2026.10.17 has no Intel macOS installer, so Intel Macs are explicitly unsupported by this cask. It installs `jiandu` and `nova` as Homebrew formula dependencies. Bodhi already bundles its Bamboo backend. Homebrew manages the two command-line tools separately so `brew upgrade` can update them. Magpie is not a Bodhi cask dependency — install it separately when you need the Telegram/Feishu bridge.
+The Bodhi cask supports Apple Silicon (arm64) and installs the published Bodhi DMG and prebuilt `jiandu` and `nova` command-line tools. These packages require no Rust or LLVM toolchain. Homebrew manages the two command-line tools separately so `brew upgrade` can update them. Install Magpie separately for the Telegram/Feishu bridge.
+
+On first launch, Bodhi downloads and verifies Bamboo and Lotus Next from the official component catalog. If the catalog provides a browser runtime for your platform, Bodhi installs it too. See [Bodhi's component download guide](https://github.com/bigduu/Bodhi-AI#thin-shell-component-downloads).
 
 To install only one of the command-line tools, use its fully qualified name; Homebrew trusts that item for the install:
 
 ```sh
 brew tap bigduu/tap
 brew install bigduu/tap/nova     # macOS only; installs the Nova release archive
-brew install bigduu/tap/jiandu   # compiles Jiandu from its source tag with Rust
+brew install bigduu/tap/jiandu   # on macOS, installs the prebuilt universal Jiandu release
 brew install bigduu/tap/magpie   # macOS / Linux x86_64; Magpie IM bridge for Bamboo
 ```
 
@@ -43,7 +45,7 @@ installed original-audit verification for automatic PRs, avoiding a repeated
 Unit or installation run. Ordinary PRs still run their real contract and
 two-architecture installation tests.
 
-The updater first scans metadata and the necessary Jiandu source archive hash.
+The updater first scans the stable release metadata and hashes the pinned Jiandu Linux source archive.
 An explicit no-change result skips Unit, PR creation, snapshot upload and native
 checks; a missing/unknown result or scan failure fails the job. A real candidate
 runs Unit once, then independently prepares and fully verifies current downloads
@@ -58,11 +60,11 @@ passed PR proof or a product failure. Two later successful schedules were no-ops
 that still ran Unit under the earlier definition. These facts do not certify the
 new scan's hosted execution or a future candidate's proof.
 
-The `Update tap releases` workflow checks the latest published stable releases of Bodhi, Jiandu, and Nova every six hours. It also supports a manual run from `main`. When all three match, it performs a read-only no-op. The updater refuses downgrades and changed digests at the same version. Every Bodhi DMG selected by the reviewed cask and Nova's universal CLI archive must match their published asset digests. Jiandu is built from its released source tag, so the updater downloads its source archive to verify the SHA-256 even for a no-op.
+The `Update tap releases` workflow checks the latest published stable releases of Bodhi, Jiandu, and Nova every six hours. It also supports a manual run from `main`. When all three match, it performs a read-only no-op. The updater refuses downgrades and changed digests at the same version. Every Bodhi DMG selected by the reviewed cask and the universal macOS CLI archives for Jiandu and Nova must match their published asset digests. The standalone Jiandu formula on Linux builds the pinned release source with Rust. The updater hashes that source archive even when the scan finds no changes.
 
 The current ARM-only cask selects the exact ARM DMG. Historical dual-architecture casks continue to require both DMGs. Version updates preserve that reviewed architecture contract, dependencies and installation behavior; missing selected assets stop the update. CI verifies the ARM installation and the explicit Intel rejection while retaining formula checks on both architectures.
 
-For new versions, it resolves each upstream tag to an exact source commit and verifies all selected downloads, then opens one `automation/tap-<release-identity>` PR containing only the necessary cask/formula versions, URLs, and hashes. Dependencies and installation behavior stay intact. A snapshot fixes all three release identities, tap base, PR head, and candidate tree. The same workflow audits, fetches, and installs that exact candidate on Apple Silicon and Intel using the normal tap checks. It rechecks the releases, downloads, PR head/base, reviews, and required checks before merging the exact head. Version updates never push directly to `main`.
+For new versions, it resolves each upstream tag to an exact source commit and verifies all selected downloads, then opens one `automation/tap-<release-identity>` PR with the necessary cask/formula versions, URLs, hashes, and formula revision resets for new upstream versions. A snapshot fixes all three release identities, tap base, PR head, and candidate tree. The same workflow audits, fetches, and installs that exact candidate on Apple Silicon and Intel using the normal tap checks. It rechecks the releases, downloads, PR head/base, reviews, and required checks before merging the exact head. Version updates never push directly to `main`.
 
 The PR body records an original run/prepare-attempt locator. Read-only PR jobs
 use the verifier from the exact trusted base to authenticate the workflow ID and
@@ -80,9 +82,7 @@ dependency cycle. A merge-only retry keeps the original snapshot attempt and
 successful native results. A failed-native-only retry retains successful sibling
 results and verifies the latest attempt of the failed target; rerunning prepare
 requires its new locator and snapshot. Historical snapshots keep their existing
-merge contract but cannot provide new automatic-PR proof. Jiandu still compiles
-its published source during native installation; a binary formula needs a
-separate producer migration.
+merge contract but cannot provide new automatic-PR proof.
 
 Before any installation postflight, the checks mount the downloaded Bodhi DMG read-only and verify the original app's signature. Only the current valid ad-hoc signing class is admitted. A Developer ID/certificate signature or unknown signing state stops the update so a maintainer can migrate the temporary quarantine/signing workaround before accepting that release.
 

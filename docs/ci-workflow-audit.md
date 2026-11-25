@@ -124,9 +124,11 @@ concurrent release/dependency PRs and their locks.
 | `check-tap.yml` | Shared real ARM64/Intel candidate installation, architecture, signing and runtime checks. Reuse mode verifies the original successful evidence; ordinary mode executes the checks. Do not wait on the updater's whole run when its merge job itself depends on acceptance. |
 | `update-tap.yml` | Scheduled/manual prepared-candidate owner. Its original Unit and native results can authorize its generated PR; successful existing candidates are not audited again by PR/main. Existing no-change schedules still execute fast updater contract tests, a separate minor follow-up from product-build ownership. |
 
-Jiandu's source formula still compiles during actual installation acceptance.
-Zero downstream compilation requires a real prebuilt producer and a separately
-verified formula migration; this review does not invent such artifacts.
+The PR25 baseline compiled Jiandu during installation. The candidate in
+[Homebrew tap #75](https://github.com/bigduu/homebrew-tap/issues/75) now checks
+the official prebuilt Jiandu archive and the macOS build-dependency graph.
+ARM64 installs both companions through the Bodhi cask. Intel installs the
+companion formulae directly and verifies that the ARM-only cask is rejected.
 
 ## Historical Lotus
 

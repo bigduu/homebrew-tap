@@ -108,10 +108,11 @@ macOS where required. Docker Linux ARM64 is an additional target, not a duplicat
 of the existing Linux x64 executable; producer support and runtime ABI checks are
 a separate bounded change.
 
-Jiandu's current Homebrew formula compiles from a source archive. Eliminating
-that downstream compilation requires a real prebuilt Jiandu producer and a
-verified formula migration. Do not point the formula at invented assets or claim
-the tap is a zero-compilation consumer until that dependency is delivered.
+The macOS Jiandu formula consumes the published Universal CLI archive. The
+standalone Linux formula path installs from the pinned source archive with
+Cargo. Both inputs use the same stable release version. The tap's macOS native
+audit checks for the prebuilt archive and verifies that Bodhi's companion
+formulae have no Rust or LLVM dependency.
 
 ## Source, version and authority
 
@@ -215,7 +216,7 @@ release selector.
 | Bamboo Docker completed-asset consumption | [Bamboo #2320](https://github.com/bigduu/Bamboo-agent/issues/2320) | Pending. Await the final manifest and reuse published Linux x64 bytes; additional Linux ARM64 support has its own producer/ABI acceptance. |
 | Bamboo Rustdoc producer and retained site deployment | [Bamboo #2321](https://github.com/bigduu/Bamboo-agent/issues/2321) | The single feature Rustdoc producer and original site tar/receipt have a reviewed local checkpoint. Hosted producer acceptance and the read-only Main consumer are pending; the old main route still compiles. |
 | Complete local delivery and audit documents | [Bamboo #2339](https://github.com/bigduu/Bamboo-agent/issues/2339), [Lotus Next #458](https://github.com/bigduu/lotus-next/issues/458), [Bodhi #137](https://github.com/bigduu/Bodhi-AI/pull/137) | Full local copies and AGENTS/command-guide links exist in every repository. Bodhi merged them through six actual feature checks into dev `3789da5c`. Bamboo includes them in pending PR2322; Lotus keeps them in the dependent reviewed branch until full feature acceptance. Refresh all copies from the same accepted shared document; do not replace a local guide with a link to Zenith alone. |
-| Jiandu prebuilt formula dependency | Separate producer/consumer slice under #399 | Pending; the current source formula still compiles. Do not claim zero downstream compilation. |
+| Jiandu prebuilt formula dependency | [Homebrew tap #75](https://github.com/bigduu/homebrew-tap/issues/75) under #399 | Uses the Jiandu release producer's existing macOS Universal archive. Adoption requires the tap's native candidate acceptance. The Linux formula path continues to build from the pinned source. |
 
 Before cutover:
 

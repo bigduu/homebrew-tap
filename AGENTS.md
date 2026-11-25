@@ -59,8 +59,9 @@ must establish its own exact original and PR-proof evidence.
 ## Unchanged scheduled updates
 
 The updater checks out its actual workflow SHA and first runs
-`node scripts/tap-update.cjs scan`. This is only a read-only routing decision from current metadata and the
-necessary Jiandu source archive hash; it grants no preparation or merge authority.
+`node scripts/tap-update.cjs scan`. It makes a read-only routing decision from
+current release metadata and the Jiandu Linux source archive hash. It grants no
+preparation or merge authority.
 An explicit false skips Unit, PR preparation, snapshot upload, native checks and
 merge. Missing/unknown output or a failed scan fails the job; never treat it as
 false. A no-op has no reusable Unit/native proof.
@@ -81,11 +82,11 @@ native audit run/attempt. Never edit a digest to fit unexpected bytes, select
 moving `latest` as an installed identity, change architecture/dependencies as
 part of a version bump, or rebuild an upstream product to replace missing assets.
 
-Jiandu's current formula still compiles from its released source with Cargo.
-True zero downstream compilation requires a separate verified prebuilt Jiandu
-producer and formula migration. Do not invent a release URL or hide this
-remaining dependency behind `brew install`. Nova, Magpie and Bodhi consume
-published binaries/packages already.
+On macOS, Jiandu and Nova consume their published universal CLI archives. The
+Bodhi cask installs the published DMG and these prebuilt tools without invoking
+Rust or LLVM. On Linux the standalone Jiandu formula builds the pinned release
+source with Rust. The updater verifies the macOS binary and Linux source as
+distinct inputs. Magpie also consumes published binaries.
 
 ## Commands and guarded admission
 
@@ -97,8 +98,8 @@ actionlint .github/workflows/check.yml .github/workflows/check-tap.yml .github/w
 ```
 
 `node scripts/tap-update.cjs scan` reads the update decision without downloading
-large installer assets. `node scripts/tap-update.cjs probe` retains its full
-read-only verification path. Both use the current gh account.
+published binaries. `node scripts/tap-update.cjs probe` retains its full read-only
+verification path. Both use the current gh account.
 Native installation tests run only in disposable CI runners, not on the user's
 Mac. Use failed-job reruns with the same accepted candidate and original retained
 outputs; a moved source or input requires fresh affected evidence.
