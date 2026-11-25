@@ -237,7 +237,10 @@ test('real verifier CLI checks a rendered Git candidate while final merge is pen
     const baseSha = git('rev-parse', 'HEAD');
     const releases = {
       bodhi: { version: '2027.1.1', assets: { arm: { sha256: readCask(files['Casks/bodhi.rb']).arm } } },
-      ...Object.fromEntries(['jiandu', 'nova'].map(key => [key, { version: readFormula(key, files[`Formula/${key}.rb`]).version, assets: { archive: { ...readFormula(key, files[`Formula/${key}.rb`]) } } }])),
+      ...Object.fromEntries(['jiandu', 'nova'].map(key => {
+        const { version, linuxSource, ...archive } = readFormula(key, files[`Formula/${key}.rb`]);
+        return [key, { version, assets: { archive, ...(linuxSource ? { linuxSource } : {}) } }];
+      })),
     };
     const rendered = renderFiles(files, releases);
     for (const [file, text] of Object.entries(rendered)) fs.writeFileSync(path.join(controller, file), text);

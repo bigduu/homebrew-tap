@@ -22,28 +22,30 @@ const armCask = fs.readFileSync(path.join(__dirname, '../Casks/bodhi.rb'), 'utf8
 const baseFiles = {
   'Casks/bodhi.rb': currentCask,
   'Formula/jiandu.rb': fs.readFileSync(path.join(__dirname, '../Formula/jiandu.rb'), 'utf8')
-    .replace(/^  url .+$/m, '  url "https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.0.tar.gz"'),
+    .replace(/^  url .+$/m, '  url "https://github.com/bigduu/Jiandu/releases/download/v0.3.0/jiandu-v0.3.0-universal-apple-darwin.tar.gz"')
+    .replace(/^    url .+$/m, '    url "https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.0.tar.gz"'),
   'Formula/nova.rb': fs.readFileSync(path.join(__dirname, '../Formula/nova.rb'), 'utf8')
     .replace(/^  url .+$/m, '  url "https://github.com/bigduu/Nova/releases/download/v0.3.0/nova-v0.3.0-universal-apple-darwin.tar.gz"'),
 };
 
-function formulaFixture(key, version = '0.3.0') {
+function formulaFixture(key, version = '0.3.0', sha256 = readFormula(key, baseFiles[`Formula/${key}.rb`]).sha256) {
   const repository = key === 'jiandu' ? 'bigduu/Jiandu' : 'bigduu/Nova';
   const tag = `v${version}`;
-  const name = `nova-${tag}-universal-apple-darwin.tar.gz`;
+  const name = `${key}-${tag}-universal-apple-darwin.tar.gz`;
   return {
     id: key === 'jiandu' ? 124 : 125, draft: false, prerelease: false, tag_name: tag,
     target_commitish: key === 'jiandu' ? 'main' : 'master', published_at: '2026-10-07T00:00:00Z',
     html_url: `https://github.com/${repository}/releases/tag/${tag}`,
-    assets: key === 'jiandu' ? [] : [{ id: 20, name, state: 'uploaded', size: 3,
-      updated_at: '2026-10-07T00:00:00Z', digest: `sha256:${readFormula('nova', baseFiles['Formula/nova.rb']).sha256}`,
+    assets: [{ id: 20, name, state: 'uploaded', size: 3,
+      updated_at: '2026-10-07T00:00:00Z', digest: `sha256:${sha256}`,
       browser_download_url: `https://github.com/${repository}/releases/download/${tag}/${name}` }],
   };
 }
 
 function releasesFixture() {
   const jiandu = admitFormulaRelease(formulaFixture('jiandu'), 'jiandu', SOURCE);
-  jiandu.assets.archive = { ...jiandu.assets.archive, size: 3, sha256: readFormula('jiandu', baseFiles['Formula/jiandu.rb']).sha256 };
+  const { linuxSource } = readFormula('jiandu', baseFiles['Formula/jiandu.rb']);
+  jiandu.assets.linuxSource = { ...jiandu.assets.linuxSource, size: 3, sha256: linuxSource.sha256 };
   return { bodhi: admitRelease(fixture()), jiandu, nova: admitFormulaRelease(formulaFixture('nova'), 'nova', SOURCE) };
 }
 
@@ -169,20 +171,30 @@ test('formula releases use resolved tags even when target_commitish names a movi
     assert.equal(release.version, '0.3.0');
     assert.throws(() => admitFormulaRelease(formulaFixture(key), key, 'main'));
     assert.throws(() => admitFormulaRelease({ ...formulaFixture(key), prerelease: true }, key, SOURCE));
+    const raw = formulaFixture(key);
+    raw.assets[0].name = `${key}-development-app.zip`;
+    assert.throws(() => admitFormulaRelease(raw, key, SOURCE), /Expected exactly one/);
   }
-  const raw = formulaFixture('nova');
-  raw.assets[0].name = 'nova-development-app.zip';
-  assert.throws(() => admitFormulaRelease(raw, 'nova', SOURCE), /Expected exactly one/);
 });
 
-test('formula updates change only archive URL/hash and preserve all dependencies and install behavior', () => {
+test('formula updates change only archive identities and reset the Jiandu revision for a newer release', () => {
+  const macosRevision = '\n  on_macos do\n    revision 1\n  end\n';
   for (const key of ['jiandu', 'nova']) {
-    const text = baseFiles[`Formula/${key}.rb`];
-    const nextRelease = admitFormulaRelease(formulaFixture(key, '0.4.0'), key, SOURCE);
-    if (key === 'jiandu') nextRelease.assets.archive.sha256 = ARM;
+    const formula = baseFiles[`Formula/${key}.rb`];
+    const text = key === 'jiandu' && !formula.includes(macosRevision)
+      ? formula.replace(/^  license [^\n]+\n/m, `$&${macosRevision}`)
+      : formula;
+    const nextRelease = admitFormulaRelease(formulaFixture(key, '0.4.0', ARM), key, SOURCE);
+    if (key === 'jiandu') nextRelease.assets.linuxSource.sha256 = INTEL;
     const next = renderPackage(key, text, nextRelease);
-    assert.equal(readFormula(key, next).version, '0.4.0');
-    const redact = value => value.replace(/^  url .+$/m, '').replace(/^  sha256 .+$/m, '');
+    const updated = readFormula(key, next);
+    assert.equal(updated.version, '0.4.0');
+    assert.equal(updated.sha256, ARM);
+    if (key === 'jiandu') {
+      assert.equal(updated.linuxSource.sha256, INTEL);
+      assert.doesNotMatch(next, /^  on_macos do$/m);
+    }
+    const redact = value => value.replace(macosRevision, '').replace(/^ {2,4}(url|sha256) .+\n/gm, '');
     assert.equal(redact(text), redact(next));
     assert.throws(() => renderPackage(key, text, { ...nextRelease, version: '0.2.0' }));
     const existing = releasesFixture()[key];
@@ -190,6 +202,34 @@ test('formula updates change only archive URL/hash and preserve all dependencies
     existing.assets.archive.sha256 = 'f'.repeat(64);
     assert.throws(() => renderPackage(key, text, existing), /digest changed/);
   }
+});
+
+test('requires the exact Jiandu binary asset and immutable Linux source identity', () => {
+  for (const alter of [
+    raw => { raw.assets = []; },
+    raw => { raw.assets.push(raw.assets[0]); },
+    raw => { raw.assets[0].state = 'new'; },
+    raw => { raw.assets[0].digest = null; },
+    raw => { raw.assets[0].browser_download_url = raw.assets[0].browser_download_url.replace('/download/v0.3.0/', '/download/v0.3.1/'); },
+  ]) {
+    const raw = formulaFixture('jiandu');
+    alter(raw);
+    assert.throws(() => admitFormulaRelease(raw, 'jiandu', SOURCE));
+  }
+  const text = baseFiles['Formula/jiandu.rb'];
+  const { jiandu } = releasesFixture();
+  assert.throws(() => readFormula('jiandu', text.replace('/tags/v0.3.0', '/tags/v0.3.1')), /archive versions disagree/);
+  jiandu.assets.linuxSource.sha256 = ARM;
+  assert.throws(() => renderPackage('jiandu', text, jiandu), /Linux source digest changed/);
+  delete jiandu.assets.linuxSource;
+  assert.throws(() => renderPackage('jiandu', text, jiandu), /Missing Jiandu Linux source archive/);
+});
+
+test('reconstructs a historical source-only Jiandu candidate without changing its contract', () => {
+  const source = `class Jiandu < Formula\n  url "https://github.com/bigduu/Jiandu/archive/refs/tags/v0.4.0.tar.gz"\n  sha256 "${ARM}"\n  depends_on "rust" => :build\nend\n`;
+  const release = { version: '0.5.1', assets: { archive: { url: 'https://github.com/bigduu/Jiandu/archive/refs/tags/v0.5.1.tar.gz', sha256: INTEL } } };
+  assert.equal(renderPackage('jiandu', source, release), source.replace('v0.4.0', 'v0.5.1').replace(ARM, INTEL));
+  assert.throws(() => renderPackage('jiandu', baseFiles['Formula/jiandu.rb'], release), /Unexpected jiandu release archive URL/);
 });
 
 test('verifies downloaded bytes and refuses digest/size/HTTP failures', async () => {
@@ -357,13 +397,13 @@ test('candidate gate checks the exact one-commit cask update and detects unrelat
 });
 
 for (const [contract, cask] of [['dual', currentCask], ['ARM-only', armCask]]) {
-test(`matching three releases prepare (${contract}) is read-only and verifies Jiandu source bytes without a PR`, () => {
+test(`matching three releases prepare (${contract}) is read-only and verifies Jiandu Linux source bytes without a PR`, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bodhi-noop-test-'));
   try {
     fs.mkdirSync(path.join(directory, 'Casks'));
     fs.mkdirSync(path.join(directory, 'Formula'));
     const files = { ...baseFiles, 'Casks/bodhi.rb': cask,
-      'Formula/jiandu.rb': baseFiles['Formula/jiandu.rb'].replace(/^  sha256 .+$/m, `  sha256 "${hash('abc')}"`) };
+      'Formula/jiandu.rb': baseFiles['Formula/jiandu.rb'].replace(/^    sha256 .+$/m, `    sha256 "${hash('abc')}"`) };
     for (const [file, text] of Object.entries(files)) fs.writeFileSync(path.join(directory, file), text);
     const current = readCask(cask);
     const raw = fixture(current.version);
@@ -414,6 +454,7 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
     git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid');
     const files = { ...baseFiles };
     for (const key of ['jiandu', 'nova']) files[`Formula/${key}.rb`] = files[`Formula/${key}.rb`].replace(/^  sha256 .+$/m, `  sha256 "${hash('abc')}"`);
+    files['Formula/jiandu.rb'] = files['Formula/jiandu.rb'].replace(/^    sha256 .+$/m, `    sha256 "${hash('abc')}"`);
     for (const [file, text] of Object.entries(files)) {
       fs.mkdirSync(path.dirname(path.join(worktree, file)), { recursive: true });
       fs.writeFileSync(path.join(worktree, file), text);
@@ -448,7 +489,7 @@ test('prepare creates one PR, reuses it, safely refreshes a bot candidate, and p
       GITHUB_REPOSITORY: 'bigduu/homebrew-tap', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_OUTPUT: '',
       GITHUB_SHA: git('rev-parse', 'main'), GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1',
       TAP_TEST_REMOTE: remote, TAP_TEST_BASE: git('rev-parse', 'main'), TAP_TEST_PR: prFile, TAP_TEST_LOG: logFile,
-      TAP_TEST_RELEASES: JSON.stringify({ 'Bodhi-AI': bodhi, Jiandu: formulaFixture('jiandu'), Nova: nova }),
+      TAP_TEST_RELEASES: JSON.stringify({ 'Bodhi-AI': bodhi, Jiandu: formulaFixture('jiandu', '0.3.0', hash('abc')), Nova: nova }),
     };
     const prepare = () => JSON.parse(execFileSync(process.execPath, [path.join(__dirname, 'tap-update.cjs'), 'prepare', snapshotPath], {
       cwd: worktree, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env,
@@ -494,6 +535,7 @@ function scanFixture(t, changed) {
   const files = { ...baseFiles, 'Casks/bodhi.rb': armCask };
   for (const key of ['jiandu', 'nova']) files['Formula/' + key + '.rb'] =
     files['Formula/' + key + '.rb'].replace(/^  sha256 .+$/m, '  sha256 "' + hash('abc') + '"');
+  files['Formula/jiandu.rb'] = files['Formula/jiandu.rb'].replace(/^    sha256 .+$/m, '    sha256 "' + hash('abc') + '"');
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
     fs.writeFileSync(path.join(directory, file), text);
@@ -503,7 +545,7 @@ function scanFixture(t, changed) {
   bodhi.assets[0].digest = 'sha256:' + (changed ? hash('abc') : readCask(armCask).arm);
   const nova = formulaFixture('nova'); nova.assets[0].digest = 'sha256:' + hash('abc');
   const model = path.join(directory, 'model.json'), log = path.join(directory, 'calls.jsonl');
-  const value = { releases: { 'Bodhi-AI': bodhi, Jiandu: formulaFixture('jiandu'), Nova: nova } };
+  const value = { releases: { 'Bodhi-AI': bodhi, Jiandu: formulaFixture('jiandu', '0.3.0', hash('abc')), Nova: nova } };
   const save = () => fs.writeFileSync(model, JSON.stringify(value));
   save();
   const bin = path.join(directory, 'bin'); fs.mkdirSync(bin);
@@ -521,7 +563,8 @@ function scanFixture(t, changed) {
     'globalThis.fetch=async url=>{const fs=require("node:fs"),m=JSON.parse(fs.readFileSync(process.env.TAP_TEST_MODEL));',
     'fs.appendFileSync(process.env.TAP_TEST_LOG,JSON.stringify(["download",String(url)])+"\\n");',
     'if(!String(url).startsWith("https://github.com/bigduu/"))throw Error("Unexpected download");',
-    'return new Response(m.badLarge&&!String(url).includes("/Jiandu/")?"bad":"abc");};',
+    'const bad=m.badLarge&&String(url).endsWith(".dmg")||m.badJiandu&&String(url).includes("/Jiandu/releases/");',
+    'return new Response(bad?"bad":"abc");};',
   ].join('\n'));
   const output = path.join(directory, 'outputs.txt'), snapshot = path.join(directory, 'snapshot.json');
   const environment = Object.fromEntries(['PATH', 'HOME', 'SystemRoot', 'TMPDIR', 'LANG', 'LC_ALL']
@@ -551,15 +594,16 @@ for (const changed of [false, true]) test('read-only scan reports ' + changed + 
     [['download', 'https://github.com/bigduu/Jiandu/archive/refs/tags/v0.3.0.tar.gz']]);
 });
 
-for (const variant of ['api', 'prerelease', 'same-version-digest']) test('read-only scan rejects ' + variant + ' instead of reporting a no-op', t => {
+for (const variant of ['api', 'prerelease', 'same-version-digest', 'missing-jiandu-binary']) test('read-only scan rejects ' + variant + ' instead of reporting a no-op', t => {
   const h = scanFixture(t, false);
   if (variant === 'api') h.value.apiFailure = true;
   if (variant === 'prerelease') h.value.releases['Bodhi-AI'].prerelease = true;
   if (variant === 'same-version-digest') h.value.releases['Bodhi-AI'].assets[0].digest = 'sha256:' + 'f'.repeat(64);
+  if (variant === 'missing-jiandu-binary') h.value.releases.Jiandu.assets = [];
   h.save();
   const result = h.execute('scan');
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /failed API read|Prereleases cannot|digest changed/);
+  assert.match(result.stderr, /failed API read|Prereleases cannot|digest changed|Expected exactly one jiandu/);
   assert.equal(fs.existsSync(h.output), false);
   h.unchanged();
 });
@@ -577,6 +621,20 @@ test('read-only scan never substitutes for the existing full probe or prepare by
   }
 });
 
+test('probe and prepare verify the original Jiandu macOS archive bytes when an update is needed', t => {
+  const h = scanFixture(t, true);
+  h.value.badJiandu = true; h.save();
+  assert.equal(h.execute('scan').status, 0, 'scan reads the binary asset identity without downloading it');
+  for (const action of ['probe', 'prepare']) {
+    h.reset();
+    const result = h.execute(action);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Asset digest mismatch for jiandu-v0\.3\.0-universal-apple-darwin\.tar\.gz/);
+    assert.ok(h.calls().some(call => call[0] === 'download' && call[1].includes('/Jiandu/releases/')));
+    h.unchanged();
+  }
+});
+
 test('read-only scan cannot authorize prepare after external release inputs change', t => {
   const h = scanFixture(t, true);
   assert.equal(h.execute('scan').status, 0);
@@ -587,10 +645,10 @@ test('read-only scan cannot authorize prepare after external release inputs chan
   // Fresh full validation occurs before the unchanged main mutation guard,
   // which deliberately has no GitHub execution identity in this inert fixture.
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Updater may only mutate its own tap/);
-  const large = h.calls().filter(call => call[0] === 'download' && !call[1].includes('/Jiandu/')).map(call => call[1]);
-  assert.equal(large.length, 2, 'one fresh Bodhi and one Nova download, not a scan replay');
-  assert.ok(large.some(url => url.includes('app-v2026.10.8/')));
-  assert.ok(large.every(url => !url.includes('app-v2026.10.7/')));
+  const publishedAssets = h.calls().filter(call => call[0] === 'download' && call[1].includes('/releases/')).map(call => call[1]);
+  assert.equal(publishedAssets.length, 3, 'one fresh published download per product');
+  assert.ok(publishedAssets.some(url => url.includes('app-v2026.10.8/')));
+  assert.ok(publishedAssets.every(url => !url.includes('app-v2026.10.7/')));
   h.unchanged();
 });
 

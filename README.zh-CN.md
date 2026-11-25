@@ -8,7 +8,7 @@
 [#24/PR25](https://github.com/bigduu/homebrew-tap/pull/25) 已合入原始审计认证：自动 PR 的
 额外触发复用已成功的 Unit 和双架构安装结果；普通 PR 仍实际运行这些检查。
 
-更新器先只读扫描元数据和必要的 Jiandu 源码摘要。明确无变化时，跳过 Unit、创建 PR、
+更新器先只读扫描稳定发布元数据，并校验固定的简牍 Linux 源码包摘要。明确无变化时，跳过 Unit、创建 PR、
 快照上传及原生检查；缺失、未知结果或扫描失败会使 job 失败，不能默认为无变化。
 存在候选时先运行一次 Unit，再由 prepare 独立重读并完整校验当前下载后创建 PR。
 扫描只决定路由，不授予发布或合并资格；现有手动完整 `probe` 和原件证明契约保持不变。
@@ -31,14 +31,16 @@ brew install --cask bigduu/tap/bodhi
 
 Homebrew 要求显式信任第三方 tap，才能加载其中的 formula 依赖。`brew trust bigduu/tap` 会信任这个 tap，包括它以后发布的包。
 
-Bodhi cask 当前支持 Apple Silicon（arm64），并把 `jiandu` 和 `nova` 作为 Homebrew formula 依赖一起安装。当前 cask 明确拒绝 Intel Mac。Bodhi 已经内置了 Bamboo 后端。两个命令行工具由 Homebrew 单独管理，这样 `brew upgrade` 可以更新它们。Magpie 不是 Bodhi cask 的依赖——需要 Telegram/飞书桥接时再单独安装。
+Bodhi cask 支持 Apple Silicon（arm64），安装已发布的 Bodhi DMG，以及预编译的 `jiandu` 和 `nova` 命令行工具。这些包无需 Rust 或 LLVM 工具链。两个命令行工具由 Homebrew 单独管理，可以通过 `brew upgrade` 更新。需要 Telegram/飞书桥接时可单独安装 Magpie。
+
+首次启动时，Bodhi 会从官方组件目录下载并校验 Bamboo 和 Lotus Next。目录为当前平台提供浏览器运行时时，Bodhi 也会一并安装。参见 [Bodhi 组件下载说明](https://github.com/bigduu/Bodhi-AI/blob/main/README.zh-CN.md#轻量版组件下载)。
 
 如果只想安装其中一个命令行工具，使用完整名称即可，Homebrew 会为这次安装信任该条目：
 
 ```sh
 brew tap bigduu/tap
 brew install bigduu/tap/nova     # 仅限 macOS；安装 Nova 的 release 压缩包
-brew install bigduu/tap/jiandu   # 用 Rust 从源码 tag 编译简牍
+brew install bigduu/tap/jiandu   # 在 macOS 上安装简牍的预编译通用发行包
 brew install bigduu/tap/magpie   # macOS / Linux x86_64；Bamboo 的 IM 桥接
 ```
 
@@ -52,13 +54,13 @@ Nova formula 只安装命令行程序。单独发布的 Nova.app 压缩包标注
 
 ## 自动更新 tap
 
-`Update tap releases` 工作流每六小时检查一次 Bodhi、简牍 Jiandu、Nova 的最新公开稳定 release，也可以在 `main` 手动运行。三包都匹配时只读退出；拒绝降级，以及同版本下载摘要被替换的情况。Bodhi 按已审查 cask 选择的全部 DMG 和 Nova 的 universal CLI 压缩包必须匹配 release 资产摘要。当前 ARM-only cask 只选择确切的 ARM DMG，历史双架构 cask 仍要求两种 DMG。版本更新保留原架构契约、依赖和安装行为，缺少所选资产就停止。简牍从发布的源码 tag 编译，因此即使版本未变，也会实际下载源码 archive 校验 SHA-256。
+`Update tap releases` 工作流每六小时检查一次 Bodhi、简牍 Jiandu、Nova 的最新公开稳定 release，也可以在 `main` 手动运行。三包都匹配时只读退出；拒绝降级，以及同版本下载摘要被替换的情况。Bodhi 按已审查 cask 选择的全部 DMG，以及简牍和 Nova 的 macOS 通用 CLI 压缩包，都必须匹配 release 资产摘要。Linux 单独安装简牍时使用 Rust 编译固定版本的发布源码。更新器在版本未变时也会下载该源码包并校验摘要。当前 ARM-only cask 只选择确切的 ARM DMG，历史双架构 cask 仍要求两种 DMG。版本更新保留原架构契约、依赖和安装行为，缺少所选资产就停止。
 
-出现新版本时，更新器先解析每个上游 tag 对应的确切源码提交，并下载校验所选资产，再创建一个 `automation/tap-<release-identity>` PR，只修改必要 cask/formula 的版本、URL 和哈希；保留全部依赖和安装行为。快照固定三包的 release 身份、tap 基线、PR head 和候选 tree。同一次工作流在 Apple Silicon 和 Intel 上对这个确切候选运行正常 tap 的 audit、下载和安装检查；合并前再次核对 release、下载内容、PR head/base、review 和 required checks。版本更新始终经过 PR，不直接推送 `main`。
+出现新版本时，更新器先解析每个上游 tag 对应的确切源码提交，并下载校验所选资产，再创建一个 `automation/tap-<release-identity>` PR，更新必要的 cask/formula 版本、URL 和哈希，并在上游版本升级时重置相应的 formula revision。快照固定三包的 release 身份、tap 基线、PR head 和候选 tree。同一次工作流在 Apple Silicon 和 Intel 上对这个确切候选运行正常 tap 的 audit、下载和安装检查；合并前再次核对 release、下载内容、PR head/base、review 和 required checks。版本更新始终经过 PR，不直接推送 `main`。
 
 PR 正文记录原始 run/prepare attempt 的定位信息。只读检查从确切的可信 PR base 加载校验器，核对 workflow ID/路径、仓库、main 上的定时/手动控制器、不可变快照和实时候选，再要求原始 Unit 和对应架构安装 job 成功。定位信息或 bot 分支名称本身不能取得复用资格；缺失、外来、过期、失败和 skipped 证据都不能通过。原有检查名与 `Tap Acceptance` 汇总只承认实际通过的检查或认证后的原始成功结果。首次落地校验器的人类 PR 仍运行真实 Unit 和原生安装检查；可信 base 含有校验器后才启用自动复用。
 
-证据检查只等待 prepare/native jobs，不等待更新器最终 merge 或整个 run 完成，因此待批准的 PR 不会造成这种循环依赖。只重试 merge 时保留原始快照 attempt 和成功的原生结果；只重试失败架构时保留成功的另一架构，并核对该失败目标最新一次 attempt 的真实结果。重新执行 prepare 则必须使用新定位信息与快照。历史快照保留旧合并契约，但不能充当新自动 PR 证据。Jiandu 的安装仍会从已发布源码编译；二进制 formula 迁移属于独立工作。
+证据检查只等待 prepare/native jobs，不等待更新器最终 merge 或整个 run 完成，因此待批准的 PR 不会造成这种循环依赖。只重试 merge 时保留原始快照 attempt 和成功的原生结果；只重试失败架构时保留成功的另一架构，并核对该失败目标最新一次 attempt 的真实结果。重新执行 prepare 则必须使用新定位信息与快照。历史快照保留旧合并契约，但不能充当新自动 PR 证据。
 
 检查在安装 postflight 前只读挂载已下载的 Bodhi DMG，校验应用原始签名，只准入当前有效的 ad-hoc 签名。出现 Developer ID/证书签名或未知签名状态时会停止更新，要求维护者先迁移临时 quarantine/签名 workaround，再接受该版本。
 

@@ -19,6 +19,8 @@ const PATHS = Object.values(PRODUCTS).map(product => product.path).sort();
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const VERSION = /^(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})\.(0|[1-9]\d{0,7})$/;
+const LINUX_BLOCK = /^  on_linux do\n([\s\S]*?)^  end$/gm;
+const MACOS_REVISION_BLOCK = /\n  on_macos do\n    revision [1-9]\d*\n  end\n/;
 
 function hash(text) {
   return createHash('sha256').update(text).digest('hex');
@@ -162,6 +164,16 @@ function resolveTag(repository, tag) {
   return target.sha;
 }
 
+function formulaArchive(key, version) {
+  assert.ok(key === 'jiandu' || key === 'nova');
+  const name = `${key}-v${version}-universal-apple-darwin.tar.gz`;
+  return { name, url: `https://github.com/${PRODUCTS[key].repository}/releases/download/v${version}/${name}` };
+}
+
+function jianduSourceArchive(version) {
+  return `https://github.com/bigduu/Jiandu/archive/refs/tags/v${version}.tar.gz`;
+}
+
 function admitFormulaRelease(raw, key, sourceSha) {
   const product = PRODUCTS[key];
   assert.ok(key === 'jiandu' || key === 'nova');
@@ -174,23 +186,23 @@ function admitFormulaRelease(raw, key, sourceSha) {
   assert.match(version, VERSION, 'Formula release must contain a stable numeric version');
   assert.match(sourceSha, SHA, 'Formula tag must resolve to an exact commit');
   assert.equal(raw.html_url, `https://github.com/${product.repository}/releases/tag/${raw.tag_name}`);
-  const release = { id: raw.id, version, tag: raw.tag_name, sourceSha, publishedAt: raw.published_at, url: raw.html_url, assets: {} };
-  if (key === 'jiandu') {
-    release.assets.archive = { name: `Jiandu-${version}.tar.gz`, url: `https://github.com/${product.repository}/archive/refs/tags/${raw.tag_name}.tar.gz` };
-  } else {
-    const name = `nova-${raw.tag_name}-universal-apple-darwin.tar.gz`;
-    const matches = raw.assets.filter(asset => asset.name === name);
-    assert.equal(matches.length, 1, `Expected exactly one ${name}`);
-    const asset = matches[0];
-    assert.ok(Number.isSafeInteger(asset.id) && asset.id > 0);
-    assert.equal(asset.state, 'uploaded');
-    assert.ok(Number.isSafeInteger(asset.size) && asset.size > 0);
-    assert.ok(typeof asset.updated_at === 'string' && Number.isFinite(Date.parse(asset.updated_at)));
-    assert.match(asset.digest || '', /^sha256:[a-f0-9]{64}$/, 'Missing Nova archive digest');
-    assert.equal(asset.browser_download_url, `https://github.com/${product.repository}/releases/download/${raw.tag_name}/${name}`);
-    release.assets.archive = { id: asset.id, name, size: asset.size, updatedAt: asset.updated_at, url: asset.browser_download_url, sha256: asset.digest.slice(7) };
-  }
-  return release;
+  const { name, url } = formulaArchive(key, version);
+  assert.ok(Array.isArray(raw.assets), 'Missing release assets');
+  const matches = raw.assets.filter(asset => asset.name === name);
+  assert.equal(matches.length, 1, `Expected exactly one ${name}`);
+  const asset = matches[0];
+  assert.ok(Number.isSafeInteger(asset.id) && asset.id > 0, `Missing asset id for ${name}`);
+  assert.equal(asset.state, 'uploaded', `Release asset is not fully uploaded: ${name}`);
+  assert.ok(Number.isSafeInteger(asset.size) && asset.size > 0, `Invalid asset size for ${name}`);
+  assert.ok(typeof asset.updated_at === 'string' && Number.isFinite(Date.parse(asset.updated_at)), `Invalid asset update time for ${name}`);
+  assert.match(asset.digest || '', /^sha256:[a-f0-9]{64}$/, `Missing archive digest for ${name}`);
+  assert.equal(asset.browser_download_url, url, `Unexpected download URL for ${name}`);
+  const archive = { id: asset.id, name, size: asset.size, updatedAt: asset.updated_at, url, sha256: asset.digest.slice(7) };
+  const assets = { archive };
+  if (key === 'jiandu') assets.linuxSource = { name: `Jiandu-${version}.tar.gz`, url: jianduSourceArchive(version) };
+  return {
+    id: raw.id, version, tag: raw.tag_name, sourceSha, publishedAt: raw.published_at, url: raw.html_url, assets,
+  };
 }
 
 async function latestReleases() {
@@ -203,7 +215,7 @@ async function latestReleases() {
     const sourceSha = resolveTag(product.repository, raw.tag_name);
     const release = key === 'bodhi' ? admitRelease(raw, fs.readFileSync(CASK, 'utf8')) : admitFormulaRelease(raw, key, sourceSha);
     assert.equal(release.sourceSha, sourceSha, 'Release tag moved away from its exact source');
-    if (key === 'jiandu') release.assets.archive = await downloadIdentity(release.assets.archive);
+    if (key === 'jiandu') release.assets.linuxSource = await downloadIdentity(release.assets.linuxSource);
     releases[key] = release;
   }
   return releases;
@@ -214,13 +226,26 @@ function readFormula(key, text) {
   const hashes = [...text.matchAll(/^  sha256 "([a-f0-9]{64})"$/gm)];
   assert.equal(urls.length, 1, 'Expected exactly one formula archive URL');
   assert.equal(hashes.length, 1, 'Expected exactly one formula archive hash');
-  const match = key === 'jiandu'
-    ? urls[0][1].match(/^https:\/\/github\.com\/bigduu\/Jiandu\/archive\/refs\/tags\/v([^/]+)\.tar\.gz$/)
-    : urls[0][1].match(/^https:\/\/github\.com\/bigduu\/Nova\/releases\/download\/v([^/]+)\/nova-v([^/]+)-universal-apple-darwin\.tar\.gz$/);
+  const url = urls[0][1];
+  // Source formula URLs remain readable for historical candidate snapshots.
+  const source = key === 'jiandu' && url.match(/^https:\/\/github\.com\/bigduu\/Jiandu\/archive\/refs\/tags\/v([^/]+)\.tar\.gz$/);
+  const match = source || url.match(/\/releases\/download\/v([^/]+)\//);
   assert.ok(match, 'Unexpected formula archive URL');
-  assert.match(match[1], VERSION);
-  if (key === 'nova') assert.equal(match[1], match[2], 'Nova archive and release versions disagree');
-  return { version: match[1], url: urls[0][1], sha256: hashes[0][1] };
+  const version = match[1];
+  assert.match(version, VERSION);
+  if (!source) assert.equal(url, formulaArchive(key, version).url, 'Unexpected formula archive URL');
+  const formula = { version, url, sha256: hashes[0][1] };
+  if (key === 'jiandu' && !source) {
+    const blocks = [...text.matchAll(LINUX_BLOCK)];
+    assert.equal(blocks.length, 1, 'Expected one Jiandu Linux source block');
+    const linuxUrls = [...blocks[0][1].matchAll(/^    url "([^"]+)"$/gm)];
+    const linuxHashes = [...blocks[0][1].matchAll(/^    sha256 "([a-f0-9]{64})"$/gm)];
+    assert.equal(linuxUrls.length, 1, 'Expected one Jiandu Linux source URL');
+    assert.equal(linuxHashes.length, 1, 'Expected one Jiandu Linux source hash');
+    assert.equal(linuxUrls[0][1], jianduSourceArchive(version), 'Jiandu macOS and Linux archive versions disagree');
+    formula.linuxSource = { url: linuxUrls[0][1], sha256: linuxHashes[0][1] };
+  }
+  return formula;
 }
 
 function renderPackage(key, text, release) {
@@ -229,17 +254,28 @@ function renderPackage(key, text, release) {
   const asset = release.assets.archive;
   assert.match(release.version, VERSION);
   assert.match(asset.sha256, HASH);
-  assert.equal(asset.url, key === 'jiandu'
-    ? `https://github.com/bigduu/Jiandu/archive/refs/tags/v${release.version}.tar.gz`
-    : `https://github.com/bigduu/Nova/releases/download/v${release.version}/nova-v${release.version}-universal-apple-darwin.tar.gz`);
+  const historicalJiandu = key === 'jiandu' && current.url === jianduSourceArchive(current.version);
+  const url = historicalJiandu ? jianduSourceArchive(release.version) : formulaArchive(key, release.version).url;
+  assert.equal(asset.url, url, `Unexpected ${key} release archive URL`);
+  const linuxSource = release.assets.linuxSource;
+  if (current.linuxSource) {
+    assert.ok(linuxSource, 'Missing Jiandu Linux source archive');
+    assert.equal(linuxSource.url, jianduSourceArchive(release.version), 'Unexpected Jiandu Linux release URL');
+    assert.match(linuxSource.sha256, HASH);
+  }
   assert.ok(compareVersions(release.version, current.version) >= 0, `Refusing to downgrade ${key}`);
   if (release.version === current.version) {
     assert.equal(current.url, asset.url, `Published ${key} URL changed at the current version`);
     assert.equal(current.sha256, asset.sha256, `Published ${key} digest changed at the current version`);
+    if (current.linuxSource) assert.equal(current.linuxSource.sha256, linuxSource.sha256, 'Published Jiandu Linux source digest changed at the current version');
     return text;
   }
-  return text.replace(/^  url "[^"]+"$/m, `  url "${asset.url}"`)
+  const updated = text.replace(/^  url "[^"]+"$/m, `  url "${asset.url}"`)
     .replace(/^  sha256 "[a-f0-9]{64}"$/m, `  sha256 "${asset.sha256}"`);
+  if (!current.linuxSource) return updated;
+  return updated.replace(MACOS_REVISION_BLOCK, '').replace(LINUX_BLOCK, block => block
+    .replace(/^    url "[^"]+"$/m, `    url "${linuxSource.url}"`)
+    .replace(/^    sha256 "[a-f0-9]{64}"$/m, `    sha256 "${linuxSource.sha256}"`));
 }
 
 function renderFiles(baseFiles, releases) {
@@ -363,7 +399,7 @@ async function scan() {
 async function prepare(snapshotPath, probe = false) {
   const { baseFiles, releases, candidates, changed } = await updatePlan();
   if (!changed) {
-    output({ changed: false, versions: releaseSummary(releases), reason: 'All packages match the latest stable releases, asset digests and Jiandu source archive hash' });
+    output({ changed: false, versions: releaseSummary(releases), reason: 'All packages match the latest stable releases and asset digests' });
     return;
   }
   await verifyAllDownloads(releases);
@@ -434,7 +470,7 @@ async function prepare(snapshotPath, probe = false) {
     try {
       pr = api(`repos/${REPOSITORY}/pulls`, 'POST', {
         head: branch, base: 'main', title: `chore: update tap releases (${releaseSummary(releases)})`,
-        body: withAuditLocator(`Update the tap to the latest published stable releases:\n\n${Object.entries(releases).map(([key, release]) => `- ${key}: [${release.tag}](${release.url}), source ${release.sourceSha}`).join('\n')}\n\nAll selected downloads are SHA-256 verified. The updater checks this exact candidate on ARM and Intel before merging. Only package URLs, versions and hashes change.\n\nPrepared base: ${baseSha}\nCandidate: ${headSha}\n`, audit),
+        body: withAuditLocator(`Update the tap to the latest published stable releases:\n\n${Object.entries(releases).map(([key, release]) => `- ${key}: [${release.tag}](${release.url}), source ${release.sourceSha}`).join('\n')}\n\nAll selected downloads are SHA-256 verified. The updater checks this exact candidate on ARM and Intel before merging. Only package URLs, versions, hashes and formula revision resets change.\n\nPrepared base: ${baseSha}\nCandidate: ${headSha}\n`, audit),
       });
     } catch (error) {
       // A network failure may follow a successful write; read back before retrying.

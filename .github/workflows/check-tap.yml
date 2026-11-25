@@ -123,7 +123,25 @@ jobs:
         run: brew install --dry-run --cask bigduu/tap/bodhi
       - name: Install formula dependencies in both architectures
         if: inputs.reuse_run_id == ''
-        run: brew install --formula bigduu/tap/jiandu bigduu/tap/nova
+        run: |
+          brew info --json=v2 --formula bigduu/tap/jiandu | jq -e '
+            .formulae[0].urls.stable.url | endswith("-universal-apple-darwin.tar.gz")
+          '
+          dependencies="$(brew deps --union --full-name --include-build --include-implicit bigduu/tap/jiandu bigduu/tap/nova)"
+          if grep -Eq '(^|/)(rust|llvm)(@[^[:space:]]+)?$' <<< "$dependencies"; then
+            printf 'Unexpected macOS toolchain dependencies:\n%s\n' "$dependencies" >&2
+            exit 1
+          fi
+          if [ "$RUNNER_ARCH" = X64 ]; then
+            brew install --formula bigduu/tap/jiandu bigduu/tap/nova
+          else
+            for formula in jiandu nova; do
+              if brew list --formula --versions "bigduu/tap/$formula"; then
+                echo "$formula must be absent before testing Bodhi's cask dependency installation." >&2
+                exit 1
+              fi
+            done
+          fi
       - name: Install ARM Bodhi in the disposable runner
         if: inputs.reuse_run_id == '' && runner.arch == 'ARM64'
         run: |
@@ -155,6 +173,7 @@ jobs:
         run: |
           test -x "$(brew --prefix)/bin/jiandu"
           test -x "$(brew --prefix)/bin/nova"
+          /usr/bin/lipo "$(brew --prefix)/bin/jiandu" -verify_arch arm64 x86_64
           jiandu --help
           nova --version
       - name: Install magpie
